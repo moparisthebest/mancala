@@ -88,6 +88,7 @@ Available local CPU players are declared near the top of `index.html` and are ea
 - **Jan** — prefers moves that earn another turn, then falls back to closest-to-store
 - **Jill** — prefers moves that earn another turn, then falls back to furthest-from-store
 - **Thomas** — prefers another turn first, then randomly falls back among multiple chooser strategies
+- **Alice** — pure JavaScript lookahead player that searches as deep as possible for up to 1000ms per turn
 - **Ashton** — optional Rust/WASM lookahead player that searches as deep as possible for up to 1000ms per turn; she is only shown when `mancala-solver.wasm` loads successfully
 
 ## UI Notes

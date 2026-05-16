@@ -1484,6 +1484,14 @@
     const DEFAULT_RUST_LOOKAHEAD_CONFIG = Object.freeze({
       timeBudgetMs: 1000,
     });
+    const LOOKAHEAD_TERMINAL_SCORE_WEIGHT = 100000;
+    const LOOKAHEAD_STORE_SCORE_WEIGHT = 1000;
+    const LOOKAHEAD_PIT_SCORE_WEIGHT = 25;
+    const LOOKAHEAD_EXTRA_TURN_WEIGHT = 40;
+    const LOOKAHEAD_CAPTURE_WEIGHT = 10;
+    const LOOKAHEAD_MOBILITY_WEIGHT = 5;
+    const LOOKAHEAD_MIN_SCORE = -2147483648;
+    const LOOKAHEAD_MAX_SCORE = 2147483647;
     let wasmPlayersLoadState = 'idle';
     let wasmPlayersLoadError = '';
     let wasmCpuEnginePromise = null;
@@ -1632,7 +1640,7 @@
       const startTime = performance.now();
       const pitIdx = exports.mancala_solver_choose_move_for_depth.apply(null, args.concat(depth));
       const elapsedMs = performance.now() - startTime;
-      console.log('Depth-bound solver depth ' + depth + ' finished in ' + elapsedMs.toFixed(3) + 'ms');
+      console.log('Rust depth-bound solver depth ' + depth + ' finished in ' + elapsedMs.toFixed(3) + 'ms');
       return validateRustLookaheadMove(boardState, playerIdx, pitIdx);
     }
 
@@ -1644,7 +1652,7 @@
       const decodedResult = decodeTimedSolverResult(packedResult);
       const pitIdx = decodedResult.pitIdx;
       const completedDepth = decodedResult.completedDepth;
-      console.log('Time-bound solver budget ' + budget + 'ms reached depth ' + completedDepth);
+      console.log('Rust time-bound solver budget ' + budget + 'ms reached depth ' + completedDepth);
       return validateRustLookaheadMove(boardState, playerIdx, pitIdx);
     }
 
@@ -1731,7 +1739,7 @@
           stores[playerIdx] += captured;
           pits[playerIdx][lastPitIdx] = 0;
           pits[opponentIdx][oppositeIdx] = 0;
-          capture = { landingPitIdx: lastPitIdx, oppositePitIdx: oppositeIdx };
+          capture = { landingPitIdx: lastPitIdx, oppositePitIdx: oppositeIdx, capturedSeeds: captured };
         }
       }
 
@@ -1762,6 +1770,205 @@
         collectedPits,
         extraTurn,
         scoreDelta: stores[playerIdx] - boardState.stores[playerIdx],
+      };
+    }
+
+    function listLegalPitIndices(boardState, playerIdx) {
+      const legalPitIndices = [];
+      for (let pitIdx = 0; pitIdx < PITS; pitIdx++) {
+        if (boardState.pits[playerIdx][pitIdx] > 0) legalPitIndices.push(pitIdx);
+      }
+      return legalPitIndices;
+    }
+
+    function scoreLookaheadMovePriority(result, pitIdx) {
+      return (result.gameOver ? 10000 : 0)
+        + (result.extraTurn ? 5000 : 0)
+        + ((result.capture && result.capture.capturedSeeds ? result.capture.capturedSeeds : 0) * 100)
+        + (result.scoreDelta * 10)
+        + pitIdx;
+    }
+
+    function getOrderedLookaheadPitIndices(boardState) {
+      const playerIdx = boardState.currentPlayer;
+      return listLegalPitIndices(boardState, playerIdx)
+        .map(function(pitIdx) {
+          return { pitIdx, result: simulateMove(boardState, playerIdx, pitIdx) };
+        })
+        .filter(function(entry) { return !!entry.result; })
+        .sort(function(left, right) {
+          return scoreLookaheadMovePriority(right.result, right.pitIdx) - scoreLookaheadMovePriority(left.result, left.pitIdx);
+        })
+        .map(function(entry) { return entry.pitIdx; });
+    }
+
+    function sumLookaheadPitCounts(boardState, playerIdx) {
+      return boardState.pits[playerIdx].reduce(function(total, count) { return total + count; }, 0);
+    }
+
+    function countLookaheadExtraTurnMoves(boardState, playerIdx) {
+      return listLegalPitIndices(boardState, playerIdx)
+        .map(function(pitIdx) { return simulateMove(boardState, playerIdx, pitIdx); })
+        .filter(function(result) { return result && result.extraTurn && !result.gameOver; })
+        .length;
+    }
+
+    function getBestLookaheadCapture(boardState, playerIdx) {
+      return listLegalPitIndices(boardState, playerIdx)
+        .map(function(pitIdx) { return simulateMove(boardState, playerIdx, pitIdx); })
+        .reduce(function(bestCapture, result) {
+          if (!result || !result.capture) return bestCapture;
+          return Math.max(bestCapture, result.capture.capturedSeeds || 0);
+        }, 0);
+    }
+
+    function evaluateLookaheadBoard(boardState, maximizingPlayerIdx) {
+      const opponentIdx = 1 - maximizingPlayerIdx;
+      const storeDiff = boardState.stores[maximizingPlayerIdx] - boardState.stores[opponentIdx];
+      if (boardState.gameOver) {
+        return storeDiff * LOOKAHEAD_TERMINAL_SCORE_WEIGHT;
+      }
+
+      const pitDiff = sumLookaheadPitCounts(boardState, maximizingPlayerIdx) - sumLookaheadPitCounts(boardState, opponentIdx);
+      const mobilityDiff = listLegalPitIndices(boardState, maximizingPlayerIdx).length - listLegalPitIndices(boardState, opponentIdx).length;
+      const extraTurnDiff = countLookaheadExtraTurnMoves(boardState, maximizingPlayerIdx) - countLookaheadExtraTurnMoves(boardState, opponentIdx);
+      const captureDiff = getBestLookaheadCapture(boardState, maximizingPlayerIdx) - getBestLookaheadCapture(boardState, opponentIdx);
+
+      return (storeDiff * LOOKAHEAD_STORE_SCORE_WEIGHT)
+        + (pitDiff * LOOKAHEAD_PIT_SCORE_WEIGHT)
+        + (extraTurnDiff * LOOKAHEAD_EXTRA_TURN_WEIGHT)
+        + (captureDiff * LOOKAHEAD_CAPTURE_WEIGHT)
+        + (mobilityDiff * LOOKAHEAD_MOBILITY_WEIGHT);
+    }
+
+    function searchJavaScriptLookahead(boardState, maximizingPlayerIdx, depth, alpha, beta, deadlineMs) {
+      if (deadlineMs != null && performance.now() >= deadlineMs) {
+        return {
+          score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx),
+          bestMove: -1,
+          completed: false,
+        };
+      }
+
+      if (depth === 0 || boardState.gameOver) {
+        return {
+          score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx),
+          bestMove: -1,
+          completed: true,
+        };
+      }
+
+      const orderedPitIndices = getOrderedLookaheadPitIndices(boardState);
+      if (orderedPitIndices.length === 0) {
+        return {
+          score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx),
+          bestMove: -1,
+          completed: true,
+        };
+      }
+
+      const maximizingTurn = boardState.currentPlayer === maximizingPlayerIdx;
+      let bestMove = orderedPitIndices[0];
+      let bestScore = maximizingTurn ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
+
+      for (let idx = 0; idx < orderedPitIndices.length; idx++) {
+        const pitIdx = orderedPitIndices[idx];
+        const nextBoardState = simulateMove(boardState, boardState.currentPlayer, pitIdx);
+        if (!nextBoardState) continue;
+
+        const childResult = searchJavaScriptLookahead(nextBoardState, maximizingPlayerIdx, depth - 1, alpha, beta, deadlineMs);
+        if (!childResult.completed) {
+          return {
+            score: childResult.score,
+            bestMove,
+            completed: false,
+          };
+        }
+
+        if (maximizingTurn) {
+          if (childResult.score > bestScore) {
+            bestScore = childResult.score;
+            bestMove = pitIdx;
+          }
+          alpha = Math.max(alpha, bestScore);
+        } else {
+          if (childResult.score < bestScore) {
+            bestScore = childResult.score;
+            bestMove = pitIdx;
+          }
+          beta = Math.min(beta, bestScore);
+        }
+
+        if (alpha >= beta) break;
+      }
+
+      return {
+        score: bestScore,
+        bestMove,
+        completed: true,
+      };
+    }
+
+    function chooseJavaScriptLookaheadMoveForTime(boardState, playerIdx, timeBudgetMs) {
+      const budget = normalizeRustLookaheadTimeBudget(timeBudgetMs);
+      if (boardState.currentPlayer !== playerIdx) {
+        throw new Error('JavaScript lookahead chooser expected currentPlayer ' + playerIdx + ', got ' + boardState.currentPlayer);
+      }
+
+      const legalPitIndices = getOrderedLookaheadPitIndices(boardState);
+      if (legalPitIndices.length === 0) return -1;
+      if (budget === 0) {
+        console.log('JavaScript time-bound solver budget 0ms reached depth 0');
+        return legalPitIndices[0];
+      }
+
+      const deadlineMs = performance.now() + budget;
+      let bestMove = legalPitIndices[0];
+      let depth = 1;
+      let lastCompletedDepth = 0;
+
+      while (depth < 0xffffffff) {
+        const result = searchJavaScriptLookahead(boardState, playerIdx, depth, LOOKAHEAD_MIN_SCORE, LOOKAHEAD_MAX_SCORE, deadlineMs);
+        if (!result.completed) break;
+        bestMove = result.bestMove;
+        lastCompletedDepth = depth;
+        depth++;
+      }
+
+      console.log('JavaScript time-bound solver budget ' + budget + 'ms reached depth ' + lastCompletedDepth);
+      return validateRustLookaheadMove(boardState, playerIdx, bestMove);
+    }
+
+    function chooseJavaScriptLookaheadMoveForDepth(boardState, playerIdx, maxDepth) {
+      const depth = normalizeRustLookaheadDepth(maxDepth);
+      if (boardState.currentPlayer !== playerIdx) {
+        throw new Error('JavaScript lookahead chooser expected currentPlayer ' + playerIdx + ', got ' + boardState.currentPlayer);
+      }
+      const startTime = performance.now();
+      const result = searchJavaScriptLookahead(
+        boardState,
+        playerIdx,
+        Math.max(1, depth),
+        LOOKAHEAD_MIN_SCORE,
+        LOOKAHEAD_MAX_SCORE,
+        null
+      );
+      const elapsedMs = performance.now() - startTime;
+      console.log('JavaScript depth-bound solver depth ' + depth + ' finished in ' + elapsedMs.toFixed(3) + 'ms');
+      return validateRustLookaheadMove(boardState, playerIdx, result.bestMove);
+    }
+
+    function createJavaScriptLookaheadChooser(config) {
+      const normalizedConfig = normalizeRustLookaheadConfig(config);
+      return function(boardState, playerIdx) {
+        if (normalizedConfig.timeBudgetMs > 0) {
+          return chooseJavaScriptLookaheadMoveForTime(boardState, playerIdx, normalizedConfig.timeBudgetMs);
+        }
+        return chooseJavaScriptLookaheadMoveForDepth(
+          boardState,
+          playerIdx,
+          normalizedConfig.maxDepth == null ? DEFAULT_RUST_LOOKAHEAD_DEPTH : normalizedConfig.maxDepth
+        );
       };
     }
 
@@ -1883,6 +2090,12 @@
           chooseNextTurn,
           chooseRandomChooser(chooseClosestToStore, chooseFurthestFromStore, chooseRandomPit)
         ),
+      },
+      {
+        id: 'alice',
+        name: 'Alice',
+        description: 'Searches as deep as possible for up to 1000ms each turn using a pure JavaScript solver.',
+        chooseMove: createJavaScriptLookaheadChooser({ timeBudgetMs: 1000 }),
       },
     ]);
     let AVAILABLE_PLAYERS = BASE_AVAILABLE_PLAYERS.slice();

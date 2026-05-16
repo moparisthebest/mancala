@@ -1293,6 +1293,38 @@ async function runTests() {
         currentPlayer: 0,
         gameOver: false,
       };
+      const parityBoards = [
+        {
+          name: 'comboBoard',
+          state: comboBoard,
+          depths: [1, 2, 3, 4, 5],
+        },
+        {
+          name: 'fallbackBoard',
+          state: fallbackBoard,
+          depths: [1, 2, 3, 4, 5],
+        },
+        {
+          name: 'captureBoard',
+          state: {
+            pits: [[0, 0, 1, 0, 0, 0], [0, 0, 4, 0, 0, 0]],
+            stores: [10, 8],
+            currentPlayer: 0,
+            gameOver: false,
+          },
+          depths: [1, 2, 3, 4],
+        },
+        {
+          name: 'openingBoard',
+          state: {
+            pits: [[4, 4, 4, 4, 4, 4], [4, 4, 4, 4, 4, 4]],
+            stores: [0, 0],
+            currentPlayer: 0,
+            gameOver: false,
+          },
+          depths: [1, 2, 3],
+        },
+      ];
 
       const originalRandom = Math.random;
       function withRandomSequence(values, fn) {
@@ -1338,9 +1370,23 @@ async function runTests() {
               function() { return -1; }
             )(fallbackBoard, 0);
           }),
+          javascriptTimedChoice: AVAILABLE_PLAYERS.find(p => p.id === 'alice').chooseMove(comboBoard, 0),
+          javascriptDepthChoice: chooseJavaScriptLookaheadMoveForDepth(comboBoard, 0, 4),
           rustDepthChoice: await chooseRustLookaheadMoveForDepth(comboBoard, 0, 4),
           rustTimedChoice: await chooseRustLookaheadMoveForTime(comboBoard, 0, 25),
           rustFactoryChoice: await createRustLookaheadChooser({ maxDepth: 4, timeBudgetMs: 0 })(comboBoard, 0),
+          parityChecks: parityBoards.map(function(entry) {
+            return {
+              name: entry.name,
+              results: entry.depths.map(function(depth) {
+                return {
+                  depth,
+                  javascriptMove: chooseJavaScriptLookaheadMoveForDepth(entry.state, entry.state.currentPlayer, depth),
+                  rustMove: chooseRustLookaheadMoveForDepth(entry.state, entry.state.currentPlayer, depth),
+                };
+              }),
+            };
+          }),
         };
       } finally {
         Math.random = originalRandom;
@@ -1378,12 +1424,22 @@ async function runTests() {
       `chooseRandomChooser retries with another random chooser after a -1 result: ${strategyChoices.randomChooserRetry}`);
     assert(strategyChoices.randomChooserAllMissing === -1,
       `chooseRandomChooser returns -1 only when every chooser returns -1: ${strategyChoices.randomChooserAllMissing}`);
+    assert(strategyChoices.javascriptTimedChoice === 5,
+      `Alice's JavaScript timed search prefers the extra-turn move on the combo board: ${strategyChoices.javascriptTimedChoice}`);
+    assert(strategyChoices.javascriptDepthChoice === 5,
+      `Alice's JavaScript depth search prefers the extra-turn move on the combo board: ${strategyChoices.javascriptDepthChoice}`);
     assert(strategyChoices.rustDepthChoice === 5,
       `Rust depth search prefers the extra-turn move on the combo board: ${strategyChoices.rustDepthChoice}`);
     assert(strategyChoices.rustTimedChoice === 5,
       `Rust timed search prefers the same extra-turn move on the combo board: ${strategyChoices.rustTimedChoice}`);
     assert(strategyChoices.rustFactoryChoice === 5,
       `The configurable Rust chooser factory supports fixed-depth searches: ${strategyChoices.rustFactoryChoice}`);
+    for (const parityCheck of strategyChoices.parityChecks) {
+      for (const result of parityCheck.results) {
+        assert(result.javascriptMove === result.rustMove,
+          `JavaScript and Rust fixed-depth solvers match on ${parityCheck.name} at depth ${result.depth}: js=${result.javascriptMove}, rust=${result.rustMove}`);
+      }
+    }
 
     await pagePVC.evaluate(() => document.getElementById('player-vs-cpu-btn').click());
     await sleep(120);
@@ -1398,6 +1454,7 @@ async function runTests() {
       janBtn: document.getElementById('cpu-select-jan').textContent,
       jillBtn: document.getElementById('cpu-select-jill').textContent,
       thomasBtn: document.getElementById('cpu-select-thomas').textContent,
+      aliceBtn: document.getElementById('cpu-select-alice').textContent,
       wasmLookaheadBtn: document.getElementById('cpu-select-wasm-lookahead').textContent,
     }));
     assert(pvcpuSetupOpen.open, 'Player vs CPU opens the chooser overlay');
@@ -1409,6 +1466,7 @@ async function runTests() {
     assert(pvcpuSetupOpen.janBtn === 'Choose Jan', `Player vs CPU chooser lists Jan: "${pvcpuSetupOpen.janBtn}"`);
     assert(pvcpuSetupOpen.jillBtn === 'Choose Jill', `Player vs CPU chooser lists Jill: "${pvcpuSetupOpen.jillBtn}"`);
     assert(pvcpuSetupOpen.thomasBtn === 'Choose Thomas', `Player vs CPU chooser lists Thomas: "${pvcpuSetupOpen.thomasBtn}"`);
+    assert(pvcpuSetupOpen.aliceBtn === 'Choose Alice', `Player vs CPU chooser lists Alice: "${pvcpuSetupOpen.aliceBtn}"`);
     assert(pvcpuSetupOpen.wasmLookaheadBtn === 'Choose Ashton', `Player vs CPU chooser lists Ashton once the solver loads: "${pvcpuSetupOpen.wasmLookaheadBtn}"`);
 
     await pagePVC.evaluate(() => document.getElementById('cpu-help-bob').click());
@@ -1488,8 +1546,8 @@ async function runTests() {
     }));
     assert(missingAshton.loadState === 'failed',
       `A missing wasm marks Ashton as unavailable: ${missingAshton.loadState}`);
-    assert(!missingAshton.playerIds.includes('wasm-lookahead'),
-      `A missing wasm keeps Ashton out of the player registry: [${missingAshton.playerIds}]`);
+    assert(missingAshton.playerIds.includes('alice') && !missingAshton.playerIds.includes('wasm-lookahead'),
+      `A missing wasm keeps Alice but removes Ashton from the player registry: [${missingAshton.playerIds}]`);
     assert(missingAshton.loadError.includes('404'),
       `A missing wasm preserves the loading error for debugging: "${missingAshton.loadError}"`);
     await pageMissingSolver.evaluate(() => document.getElementById('player-vs-cpu-btn').click());
