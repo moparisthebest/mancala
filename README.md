@@ -88,6 +88,7 @@ Available local CPU players are declared near the top of `index.html` and are ea
 - **Jan** — prefers moves that earn another turn, then falls back to closest-to-store
 - **Jill** — prefers moves that earn another turn, then falls back to furthest-from-store
 - **Thomas** — prefers another turn first, then randomly falls back among multiple chooser strategies
+- **Ashton** — optional Rust/WASM lookahead player that searches as deep as possible for up to 1000ms per turn; she is only shown when `mancala-solver.wasm` loads successfully
 
 ## UI Notes
 
@@ -102,7 +103,8 @@ Available local CPU players are declared near the top of `index.html` and are ea
 ### Prerequisites
 
 - `zip` command (for building the `.xdc` package)
-- Node.js - for testing only
+- optional - Node.js - for testing only
+- optional - Rust with the `wasm32-unknown-unknown` target - for building `mancala-solver.wasm`
 
 ### Install dependencies
 
@@ -110,10 +112,22 @@ Available local CPU players are declared near the top of `index.html` and are ea
 npm install
 ```
 
+To install the Rust WASM target:
+
+```sh
+rustup target add wasm32-unknown-unknown
+```
+
 ### Run the dev server
 
 ```sh
-bash start-server.sh [IP] [PORT] [--no-webxdc]
+bash start-server.sh [IP] [PORT] [--no-webxdc] [--no-wasm]
+```
+
+### Rebuild the Rust/WASM solver
+
+```sh
+./mancala-solver/build.sh
 ```
 
 Examples:
@@ -125,9 +139,12 @@ bash start-server.sh - 8080
 bash start-server.sh 192.168.1.5 8080
 bash start-server.sh --no-webxdc
 bash start-server.sh - 3000 --no-webxdc
+bash start-server.sh --no-wasm
+bash start-server.sh - 3000 --no-webxdc --no-wasm
 ```
 
 `--no-webxdc` makes `/webxdc.js` return 404 so you can test the plain-web local/PWA fallback.
+`--no-wasm` makes `*.wasm` return 404 so you can test optional solver fallback.
 
 With normal browser testing, the included `webxdc.js` stub uses `localStorage` and `storage` events to simulate multiple devices in separate tabs.
 

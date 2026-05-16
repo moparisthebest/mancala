@@ -34,6 +34,7 @@ function startServer() {
         '.js': 'application/javascript',
         '.png': 'image/png',
         '.webmanifest': 'application/manifest+json',
+        '.wasm': 'application/wasm',
       };
       res.writeHead(200, { 'Content-Type': types[ext] || 'text/plain' });
       res.end(fs.readFileSync(filePath));
@@ -1262,6 +1263,7 @@ async function runTests() {
     pagePVC.on('pageerror', e => console.log(`    [PVC ERROR] ${e.message}`));
     await configurePageSettings(pagePVC, {}, { beforeNavigation: true });
     await pagePVC.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle0' });
+    await pagePVC.waitForFunction(() => window.wasmPlayersLoadState === 'ready', { timeout: 15000 });
     await pagePVC.evaluate(() => {
       cpuTurnDelayMs = 0;
       window.__localCpuMessages = [];
@@ -1272,7 +1274,7 @@ async function runTests() {
       };
     });
 
-    const strategyChoices = await pagePVC.evaluate(() => {
+    const strategyChoices = await pagePVC.evaluate(async () => {
       const comboBoard = {
         pits: [[0, 0, 0, 0, 2, 1], [4, 4, 4, 4, 4, 4]],
         stores: [0, 0],
@@ -1302,6 +1304,7 @@ async function runTests() {
       }
       try {
         return {
+          wasmPlayersLoadState: window.wasmPlayersLoadState,
           closestToStore: chooseClosestToStore(closestBoard, 0),
           furthestFromStore: chooseFurthestFromStore(closestBoard, 0),
           randomPitFirst: withRandomSequence([0], function() { return chooseRandomPit(fallbackBoard, 0); }),
@@ -1335,11 +1338,16 @@ async function runTests() {
               function() { return -1; }
             )(fallbackBoard, 0);
           }),
+          rustDepthChoice: await chooseRustLookaheadMoveForDepth(comboBoard, 0, 4),
+          rustTimedChoice: await chooseRustLookaheadMoveForTime(comboBoard, 0, 25),
+          rustFactoryChoice: await createRustLookaheadChooser({ maxDepth: 4, timeBudgetMs: 0 })(comboBoard, 0),
         };
       } finally {
         Math.random = originalRandom;
       }
     });
+    assert(strategyChoices.wasmPlayersLoadState === 'ready',
+      `Optional WASM CPU players finish loading before chooser tests run: ${strategyChoices.wasmPlayersLoadState}`);
     assert(strategyChoices.closestToStore === 5,
       `chooseClosestToStore picks the bowl nearest the store: ${strategyChoices.closestToStore}`);
     assert(strategyChoices.furthestFromStore === 1,
@@ -1370,6 +1378,12 @@ async function runTests() {
       `chooseRandomChooser retries with another random chooser after a -1 result: ${strategyChoices.randomChooserRetry}`);
     assert(strategyChoices.randomChooserAllMissing === -1,
       `chooseRandomChooser returns -1 only when every chooser returns -1: ${strategyChoices.randomChooserAllMissing}`);
+    assert(strategyChoices.rustDepthChoice === 5,
+      `Rust depth search prefers the extra-turn move on the combo board: ${strategyChoices.rustDepthChoice}`);
+    assert(strategyChoices.rustTimedChoice === 5,
+      `Rust timed search prefers the same extra-turn move on the combo board: ${strategyChoices.rustTimedChoice}`);
+    assert(strategyChoices.rustFactoryChoice === 5,
+      `The configurable Rust chooser factory supports fixed-depth searches: ${strategyChoices.rustFactoryChoice}`);
 
     await pagePVC.evaluate(() => document.getElementById('player-vs-cpu-btn').click());
     await sleep(120);
@@ -1384,6 +1398,7 @@ async function runTests() {
       janBtn: document.getElementById('cpu-select-jan').textContent,
       jillBtn: document.getElementById('cpu-select-jill').textContent,
       thomasBtn: document.getElementById('cpu-select-thomas').textContent,
+      wasmLookaheadBtn: document.getElementById('cpu-select-wasm-lookahead').textContent,
     }));
     assert(pvcpuSetupOpen.open, 'Player vs CPU opens the chooser overlay');
     assert(pvcpuSetupOpen.title === 'Choose Opponent', `Player vs CPU chooser title: "${pvcpuSetupOpen.title}"`);
@@ -1394,6 +1409,7 @@ async function runTests() {
     assert(pvcpuSetupOpen.janBtn === 'Choose Jan', `Player vs CPU chooser lists Jan: "${pvcpuSetupOpen.janBtn}"`);
     assert(pvcpuSetupOpen.jillBtn === 'Choose Jill', `Player vs CPU chooser lists Jill: "${pvcpuSetupOpen.jillBtn}"`);
     assert(pvcpuSetupOpen.thomasBtn === 'Choose Thomas', `Player vs CPU chooser lists Thomas: "${pvcpuSetupOpen.thomasBtn}"`);
+    assert(pvcpuSetupOpen.wasmLookaheadBtn === 'Choose Ashton', `Player vs CPU chooser lists Ashton once the solver loads: "${pvcpuSetupOpen.wasmLookaheadBtn}"`);
 
     await pagePVC.evaluate(() => document.getElementById('cpu-help-bob').click());
     await sleep(80);
@@ -1444,6 +1460,45 @@ async function runTests() {
     assert(pvcpuAfterBobMove.messages === 0, `Player vs CPU stays local and sends no webxdc updates: ${pvcpuAfterBobMove.messages}`);
     await pagePVC.close();
     await playerCpuContext.close();
+
+    console.log('\n=== Optional Ashton solver hides on load failure ===');
+    const missingSolverContext = browser.createBrowserContext
+      ? await browser.createBrowserContext()
+      : await browser.createIncognitoBrowserContext();
+    const pageMissingSolver = await missingSolverContext.newPage();
+    pageMissingSolver.on('console', m => console.log(`    [NO ASHTON] ${m.text()}`));
+    pageMissingSolver.on('pageerror', e => console.log(`    [NO ASHTON ERROR] ${e.message}`));
+    await pageMissingSolver.evaluateOnNewDocument(() => {
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = function(input, init) {
+        const url = typeof input === 'string' ? input : (input && input.url) || '';
+        if (String(url).includes('mancala-solver.wasm')) {
+          return Promise.resolve(new Response('', { status: 404, statusText: 'Not Found' }));
+        }
+        return originalFetch(input, init);
+      };
+    });
+    await configurePageSettings(pageMissingSolver, {}, { beforeNavigation: true });
+    await pageMissingSolver.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle0' });
+    await pageMissingSolver.waitForFunction(() => window.wasmPlayersLoadState !== 'loading', { timeout: 15000 });
+    const missingAshton = await pageMissingSolver.evaluate(() => ({
+      loadState: window.wasmPlayersLoadState,
+      loadError: window.wasmPlayersLoadError,
+      playerIds: AVAILABLE_PLAYERS.map(player => player.id),
+    }));
+    assert(missingAshton.loadState === 'failed',
+      `A missing wasm marks Ashton as unavailable: ${missingAshton.loadState}`);
+    assert(!missingAshton.playerIds.includes('wasm-lookahead'),
+      `A missing wasm keeps Ashton out of the player registry: [${missingAshton.playerIds}]`);
+    assert(missingAshton.loadError.includes('404'),
+      `A missing wasm preserves the loading error for debugging: "${missingAshton.loadError}"`);
+    await pageMissingSolver.evaluate(() => document.getElementById('player-vs-cpu-btn').click());
+    await sleep(120);
+    const missingAshtonChooser = await pageMissingSolver.evaluate(() => document.getElementById('cpu-setup-content').textContent);
+    assert(!missingAshtonChooser.includes('Ashton'),
+      `A missing wasm keeps Ashton out of the chooser UI: "${missingAshtonChooser}"`);
+    await pageMissingSolver.close();
+    await missingSolverContext.close();
 
     // =========================================================
     // CPU vs CPU: setup flow + autoplay

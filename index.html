@@ -1480,6 +1480,188 @@
       xdcLink.href = href;
     }
 
+    const DEFAULT_RUST_LOOKAHEAD_DEPTH = 42;
+    const DEFAULT_RUST_LOOKAHEAD_CONFIG = Object.freeze({
+      timeBudgetMs: 1000,
+    });
+    let wasmPlayersLoadState = 'idle';
+    let wasmPlayersLoadError = '';
+    let wasmCpuEnginePromise = null;
+    let wasmCpuEngineExports = null;
+
+    function updateWasmPlayersLoadState(state, error) {
+      wasmPlayersLoadState = state;
+      wasmPlayersLoadError = error || '';
+      window.wasmPlayersLoadState = wasmPlayersLoadState;
+      window.wasmPlayersLoadError = wasmPlayersLoadError;
+    }
+
+    function normalizeRustLookaheadDepth(maxDepth) {
+      const parsed = Number(maxDepth);
+      if (!Number.isFinite(parsed)) return DEFAULT_RUST_LOOKAHEAD_DEPTH;
+      return Math.max(1, Math.min(42, Math.floor(parsed)));
+    }
+
+    function normalizeRustLookaheadTimeBudget(timeBudgetMs) {
+      const parsed = Number(timeBudgetMs);
+      if (!Number.isFinite(parsed)) return DEFAULT_RUST_LOOKAHEAD_CONFIG.timeBudgetMs;
+      return Math.max(0, Math.min(60000, Math.floor(parsed)));
+    }
+
+    function normalizeRustLookaheadConfig(config) {
+      const raw = config || {};
+      return {
+        maxDepth: raw.maxDepth == null ? null : normalizeRustLookaheadDepth(raw.maxDepth),
+        timeBudgetMs: normalizeRustLookaheadTimeBudget(raw.timeBudgetMs),
+      };
+    }
+
+    function encodeBoardStateForSolver(boardState, playerIdx) {
+      if (!boardState || !Array.isArray(boardState.pits) || boardState.pits.length !== 2) {
+        throw new Error('Invalid board state for Rust lookahead chooser.');
+      }
+      if (!Array.isArray(boardState.stores) || boardState.stores.length !== 2) {
+        throw new Error('Invalid store state for Rust lookahead chooser.');
+      }
+      if (boardState.currentPlayer !== playerIdx) {
+        throw new Error('Rust lookahead chooser expected currentPlayer ' + playerIdx + ', got ' + boardState.currentPlayer);
+      }
+      return [
+        boardState.pits[0][0], boardState.pits[0][1], boardState.pits[0][2],
+        boardState.pits[0][3], boardState.pits[0][4], boardState.pits[0][5],
+        boardState.pits[1][0], boardState.pits[1][1], boardState.pits[1][2],
+        boardState.pits[1][3], boardState.pits[1][4], boardState.pits[1][5],
+        boardState.stores[0], boardState.stores[1], boardState.currentPlayer,
+      ];
+    }
+
+    function validateRustLookaheadMove(boardState, playerIdx, pitIdx) {
+      if (!Number.isInteger(pitIdx) || pitIdx < 0 || pitIdx >= PITS) {
+        throw new Error('Rust lookahead chooser returned an invalid pit index: ' + pitIdx);
+      }
+      if (boardState.pits[playerIdx][pitIdx] === 0) {
+        throw new Error('Rust lookahead chooser returned an empty pit: ' + pitIdx);
+      }
+      return pitIdx;
+    }
+
+    function decodeTimedSolverResult(packedResult) {
+      if (typeof packedResult !== 'bigint') {
+        throw new Error('Expected a BigInt timed solver result, got ' + typeof packedResult);
+      }
+      const moveBits = Number(packedResult & 0xffffffffn);
+      const completedDepth = Number((packedResult >> 32n) & 0xffffffffn);
+      const pitIdx = moveBits >= 0x80000000 ? moveBits - 0x100000000 : moveBits;
+      return { pitIdx, completedDepth };
+    }
+
+    function addOptionalCpuPlayer(player) {
+      if (AVAILABLE_PLAYERS.some(function(existingPlayer) { return existingPlayer.id === player.id; })) return;
+      AVAILABLE_PLAYERS = AVAILABLE_PLAYERS.concat([player]);
+      if (cpuSetupState.open) renderCpuSetup();
+    }
+
+    function registerOptionalWasmPlayers() {
+      OPTIONAL_WASM_PLAYERS.forEach(addOptionalCpuPlayer);
+    }
+
+    function loadWasmCpuEngine() {
+      if (wasmCpuEngineExports) return Promise.resolve(wasmCpuEngineExports);
+      if (wasmPlayersLoadState === 'failed') {
+        return Promise.reject(new Error(wasmPlayersLoadError || 'WASM CPU engine failed to load.'));
+      }
+      if (wasmCpuEnginePromise) return wasmCpuEnginePromise;
+
+      updateWasmPlayersLoadState('loading', '');
+      wasmCpuEnginePromise = fetch('mancala-solver.wasm', { cache: 'no-store' })
+        .then(function(response) {
+          if (!response.ok) {
+            throw new Error('WASM CPU engine request failed: ' + response.status + ' ' + response.statusText);
+          }
+          return response.arrayBuffer();
+        })
+        .then(function(bytes) {
+          return WebAssembly.instantiate(bytes, {
+            env: {
+              now_ms: function() {
+                return performance.now();
+              },
+            },
+          });
+        })
+        .then(function(result) {
+          const exports = result.instance.exports;
+          if (typeof exports.mancala_solver_choose_move_for_depth !== 'function'
+              || typeof exports.mancala_solver_choose_move_for_time !== 'function') {
+            throw new Error('WASM CPU engine is missing required exports.');
+          }
+          wasmCpuEngineExports = exports;
+          updateWasmPlayersLoadState('ready', '');
+          registerOptionalWasmPlayers();
+          return exports;
+        })
+        .catch(function(err) {
+          wasmCpuEnginePromise = null;
+          updateWasmPlayersLoadState('failed', String(err));
+          console.warn('Optional WASM CPU players are unavailable:', err);
+          throw err;
+        });
+
+      return wasmCpuEnginePromise;
+    }
+
+    function getLoadedWasmCpuEngine() {
+      if (!wasmCpuEngineExports) {
+        throw new Error('WASM CPU engine is not loaded.');
+      }
+      return wasmCpuEngineExports;
+    }
+
+    function startOptionalWasmPlayerLoading() {
+      if (!('WebAssembly' in window)) {
+        updateWasmPlayersLoadState('failed', 'WebAssembly is unavailable in this browser.');
+        return;
+      }
+      loadWasmCpuEngine().catch(function() {});
+    }
+
+    function chooseRustLookaheadMoveForDepth(boardState, playerIdx, maxDepth) {
+      const depth = normalizeRustLookaheadDepth(maxDepth);
+      const args = encodeBoardStateForSolver(boardState, playerIdx);
+      const exports = getLoadedWasmCpuEngine();
+      const startTime = performance.now();
+      const pitIdx = exports.mancala_solver_choose_move_for_depth.apply(null, args.concat(depth));
+      const elapsedMs = performance.now() - startTime;
+      console.log('Depth-bound solver depth ' + depth + ' finished in ' + elapsedMs.toFixed(3) + 'ms');
+      return validateRustLookaheadMove(boardState, playerIdx, pitIdx);
+    }
+
+    function chooseRustLookaheadMoveForTime(boardState, playerIdx, timeBudgetMs) {
+      const budget = normalizeRustLookaheadTimeBudget(timeBudgetMs);
+      const args = encodeBoardStateForSolver(boardState, playerIdx);
+      const exports = getLoadedWasmCpuEngine();
+      const packedResult = exports.mancala_solver_choose_move_for_time.apply(null, args.concat(budget));
+      const decodedResult = decodeTimedSolverResult(packedResult);
+      const pitIdx = decodedResult.pitIdx;
+      const completedDepth = decodedResult.completedDepth;
+      console.log('Time-bound solver budget ' + budget + 'ms reached depth ' + completedDepth);
+      return validateRustLookaheadMove(boardState, playerIdx, pitIdx);
+    }
+
+    function createRustLookaheadChooser(config) {
+      const normalizedConfig = normalizeRustLookaheadConfig(config);
+      return function(boardState, playerIdx) {
+        if (normalizedConfig.timeBudgetMs > 0) {
+          return chooseRustLookaheadMoveForTime(boardState, playerIdx, normalizedConfig.timeBudgetMs);
+        }
+        return chooseRustLookaheadMoveForDepth(
+          boardState,
+          playerIdx,
+          normalizedConfig.maxDepth == null ? DEFAULT_RUST_LOOKAHEAD_DEPTH : normalizedConfig.maxDepth
+        );
+      };
+    }
+
     // =====================================================================
     // LOCAL CPU PLAYERS
     // Add new automated players here. Each player only chooses a pit index;
@@ -1662,7 +1844,7 @@
       };
     }
 
-    const AVAILABLE_PLAYERS = Object.freeze([
+    const BASE_AVAILABLE_PLAYERS = Object.freeze([
       {
         id: 'bob',
         name: 'Bob',
@@ -1702,6 +1884,15 @@
           chooseRandomChooser(chooseClosestToStore, chooseFurthestFromStore, chooseRandomPit)
         ),
       },
+    ]);
+    let AVAILABLE_PLAYERS = BASE_AVAILABLE_PLAYERS.slice();
+    const OPTIONAL_WASM_PLAYERS = Object.freeze([
+      Object.freeze({
+        id: 'wasm-lookahead',
+        name: 'Ashton',
+        description: 'Searches as deep as possible for up to 1000ms each turn using the Rust/WASM solver.',
+        chooseMove: createRustLookaheadChooser(DEFAULT_RUST_LOOKAHEAD_CONFIG),
+      }),
     ]);
     const LOCAL_MODE_TYPES = Object.freeze({
       hotseat: 'hotseat',
@@ -3554,6 +3745,8 @@
     // =====================================================================
     // INIT
     // =====================================================================
+    updateWasmPlayersLoadState('idle', '');
+    startOptionalWasmPlayerLoading();
     setupListener();
     initPlainWebPwa();
     render();

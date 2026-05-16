@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mancala-pwa-v1';
+const CACHE_NAME = 'mancala-pwa-v2';
 const APP_SHELL_URLS = [
   './',
   './index.html',
@@ -6,6 +6,7 @@ const APP_SHELL_URLS = [
   './icon-192.png',
   './icon-512.png',
   './manifest.webmanifest',
+  './mancala-solver.wasm',
 ];
 
 self.addEventListener('install', function(event) {

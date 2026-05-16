@@ -1,4 +1,6 @@
-mancala.xdc
+*.xdc
+*.wasm
+target/
 node_modules
 .opencode/
 nohup.out
