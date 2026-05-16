@@ -1,0 +1,16 @@
+{
+  "name": "mancala",
+  "version": "1.0.0",
+  "description": "",
+  "main": "webxdc.js",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "AGPL-3.0-or-later",
+  "type": "commonjs",
+  "devDependencies": {
+    "puppeteer": "^24.40.0"
+  }
+}

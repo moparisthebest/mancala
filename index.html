@@ -1,0 +1,3585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+  <title>Mancala</title>
+  <meta name="theme-color" content="#2c3e50"/>
+  <link rel="icon" type="image/png" sizes="256x256" href="icon.png"/>
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+  <link rel="manifest" href="manifest.webmanifest"/>
+  <script src="webxdc.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #2c3e50;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 8px;
+      color: #ecf0f1;
+    }
+
+    /* ---------- join screen ---------- */
+
+    #join-screen {
+      text-align: center;
+      max-width: 360px;
+    }
+
+    #join-screen .join-header {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    #join-screen .join-title-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+    }
+
+    #join-screen .join-title {
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+    }
+
+    #join-screen .join-title-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+    }
+
+    #join-screen .join-header .btn {
+      margin-top: 0;
+      min-width: 180px;
+    }
+
+    #join-screen .join-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    #join-screen .join-actions .btn {
+      width: 100%;
+      margin-top: 0;
+    }
+
+    #join-screen .slot {
+      background: rgba(255,255,255,0.1);
+      border-radius: 10px;
+      padding: 14px 20px;
+      margin: 10px 0;
+      font-size: 1.1rem;
+    }
+
+    #join-screen .slot.taken {
+      border-left: 4px solid #2ecc71;
+    }
+
+    #join-screen .slot.open {
+      border-left: 4px solid #95a5a6;
+      opacity: 0.7;
+    }
+
+    .btn {
+      padding: 12px 28px;
+      font-size: 1rem;
+      font-weight: 600;
+      background: #2ecc71;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+      margin-top: 16px;
+    }
+
+    .btn:hover { background: #27ae60; }
+    .btn:disabled { background: #555; cursor: not-allowed; }
+
+    .btn-secondary {
+      background: #3498db;
+    }
+
+    .btn-secondary:hover { background: #2980b9; }
+
+    /* ---------- game screen ---------- */
+
+    #game-screen {
+      display: none;
+      text-align: center;
+      width: 100%;
+      max-width: 100%;
+      position: relative;
+    }
+
+    #menu-open-btn {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 70;
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      border: none;
+      border-radius: 50%;
+      background: rgba(17, 24, 39, 0.72);
+      color: #ecf0f1;
+      font-size: 1.1rem;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.78;
+      transition: opacity 0.2s, background 0.2s;
+    }
+
+    #menu-open-btn:hover {
+      opacity: 1;
+      background: rgba(17, 24, 39, 0.9);
+    }
+
+    #menu-open-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.42;
+    }
+
+    #board-frame {
+      position: relative;
+      margin: 0 auto;
+      overflow: visible;
+    }
+
+    #board-center {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: visible;
+    }
+
+    .board {
+      background: #6d3a1a;
+      border-radius: min(20px, 3vmin);
+      padding: min(16px, 2vmin);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      display: inline-flex;
+      position: relative;
+      gap: min(12px, 1.5vmin);
+      align-items: center;
+      border: min(4px, 0.6vmin) solid #4a2508;
+      transition: transform 0.3s ease;
+      transform-origin: center center;
+    }
+
+    #board-animation-layer {
+      position: absolute;
+      inset: 0;
+      overflow: visible;
+      pointer-events: none;
+      z-index: 20;
+    }
+
+    .store {
+      width: min(72px, 10vmin);
+      height: min(170px, 26vmin);
+      background: #c4a36e;
+      border-radius: min(40px, 5vmin);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: min(1.6rem, 4vmin);
+      font-weight: bold;
+      color: #3e2723;
+      border: min(3px, 0.5vmin) solid #8d6e4a;
+      flex-shrink: 0;
+      position: relative;
+      overflow: visible;
+    }
+
+    .store.mine { background: #a5d6a7; border-color: #66bb6a; }
+    .store.theirs { background: #ef9a9a; border-color: #ef5350; }
+    .store.locked {
+      cursor: wait;
+      opacity: 0.78;
+      box-shadow: inset 0 0 0 min(3px, 0.4vmin) rgba(255,255,255,0.18);
+    }
+
+    .pits-area {
+      display: flex;
+      flex-direction: column;
+      gap: min(12px, 1.5vmin);
+      min-width: 0;
+      overflow: visible;
+    }
+
+    .pits-row {
+      display: flex;
+      gap: min(8px, 1vmin);
+      overflow: visible;
+    }
+
+    .pit {
+      width: min(56px, 9vmin);
+      height: min(56px, 9vmin);
+      background: #c4a36e;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: min(1.15rem, 3vmin);
+      font-weight: bold;
+      color: #3e2723;
+      border: min(3px, 0.5vmin) solid #8d6e4a;
+      cursor: default;
+      transition: transform 0.1s, box-shadow 0.15s;
+      user-select: none;
+      flex-shrink: 0;
+      position: relative;
+      overflow: visible;
+    }
+
+    .pit.mine { background: #a5d6a7; border-color: #66bb6a; }
+    .pit.theirs { background: #ef9a9a; border-color: #ef5350; }
+
+    .pit.clickable {
+      cursor: pointer;
+    }
+
+    .pit.clickable:hover {
+      transform: scale(1.1);
+      box-shadow: 0 0 12px rgba(46,204,113,0.6);
+    }
+
+    .pit.clickable:active {
+      transform: scale(0.95);
+    }
+
+    .pit.disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .pit.disabled:hover { transform: none; box-shadow: none; }
+
+    .pit.locked {
+      opacity: 0.68;
+      cursor: wait;
+    }
+
+    .pit.locked:hover,
+    .pit.locked:active {
+      transform: none;
+      box-shadow: none;
+    }
+
+    .pit.empty { opacity: 0.4; }
+
+    /* ---------- marble mode ---------- */
+
+    .store {
+      cursor: pointer;
+    }
+
+    .marbles {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      align-content: center;
+      gap: 1px;
+    }
+
+    .pit .marbles {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+
+    .pit .marbles .marble {
+      position: absolute;
+    }
+
+    /* Top row pits are viewed from the opposite side of the board —
+       reverse the marble arrangement so it mirrors the bottom row view */
+
+    .store .marbles {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+
+    .store .marbles .marble {
+      position: absolute;
+    }
+
+    .marbles-overflow {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 1px;
+      z-index: 1;
+      width: calc(4 * min(10px, 2vmin) + 3 * 1px);
+    }
+
+    .marbles-overflow.overflow-top {
+      bottom: 100%;
+      margin-bottom: 1px;
+      flex-wrap: wrap-reverse;
+    }
+
+    .marbles-overflow.overflow-bottom {
+      top: 100%;
+      margin-top: 1px;
+    }
+
+    .marble {
+      width: min(10px, 2vmin);
+      height: min(10px, 2vmin);
+      border-radius: 50%;
+      box-shadow: inset -1px -1px 2px rgba(0,0,0,0.3), 0 0 1px rgba(0,0,0,0.2);
+      flex-shrink: 0;
+    }
+
+    .store .marble {
+      width: min(12px, 2.2vmin);
+      height: min(12px, 2.2vmin);
+    }
+
+    .store .marbles-overflow {
+      width: calc(4 * min(12px, 2.2vmin) + 3 * 1px);
+    }
+
+    /* Marble color classes — assigned once at game start, never changed */
+    .mc-0 { background: radial-gradient(circle at 35% 35%, #7ec8e3, #1a5276); }
+    .mc-1 { background: radial-gradient(circle at 35% 35%, #e74c3c, #641e16); }
+    .mc-2 { background: radial-gradient(circle at 35% 35%, #2ecc71, #0e6b34); }
+    .mc-3 { background: radial-gradient(circle at 35% 35%, #f39c12, #7d5006); }
+    .mc-4 { background: radial-gradient(circle at 35% 35%, #9b59b6, #4a235a); }
+
+    /* Floating marble for sow animation */
+    .marble-float {
+      position: fixed;
+      border-radius: 50%;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      z-index: 50;
+      pointer-events: none;
+      transition-property: left, top, transform, opacity;
+      transition-timing-function: ease-in-out;
+    }
+
+    .marble-float.lifting {
+      transform: scale(1.8);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.6);
+    }
+
+    .marble-float.dropping {
+      transform: scale(1.0);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+
+    /* ---------- info bar ---------- */
+
+    .status {
+      margin-top: 16px;
+      font-size: 1.15rem;
+      min-height: 1.5em;
+    }
+
+    .status.your-turn { color: #2ecc71; font-weight: 600; }
+    .status.waiting { color: #f39c12; }
+    .status.game-over { color: #e74c3c; font-weight: 600; }
+    .status.spectating { color: #9b59b6; }
+
+    .scoreboard {
+      display: flex;
+      justify-content: center;
+      gap: 40px;
+      margin-top: 14px;
+      font-size: 1rem;
+      width: 100%;
+    }
+
+    .scoreboard .player-score {
+      text-align: center;
+    }
+
+    .scoreboard .player-score .name {
+      font-size: 0.85rem;
+      opacity: 0.75;
+      margin-bottom: 2px;
+    }
+
+    .scoreboard .player-score .score {
+      font-size: 1.4rem;
+      font-weight: bold;
+    }
+
+    .scoreboard .player-score.active .name {
+      opacity: 1;
+      color: #2ecc71;
+    }
+
+    .winner-banner {
+      margin-top: 12px;
+      font-size: 1.4rem;
+      font-weight: bold;
+      color: #f1c40f;
+      min-height: 1.8em;
+    }
+
+    .actions {
+      margin-top: 14px;
+      min-height: 50px;
+    }
+
+    /* ---------- game menu overlay ---------- */
+
+    #game-menu {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 100;
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding: 24px 12px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    #game-menu.open {
+      display: block;
+    }
+
+    #game-menu .menu-sheet {
+      width: 100%;
+      max-width: 320px;
+      min-height: calc(100% - 48px);
+      margin: 0 auto;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+    }
+
+    #game-menu .menu-sheet.hidden {
+      display: none;
+    }
+
+    #game-menu h2 {
+      font-size: 1.6rem;
+      margin-bottom: 12px;
+      color: #ecf0f1;
+    }
+
+    #game-menu .menu-btn {
+      display: block;
+      width: 240px;
+      padding: 14px 0;
+      font-size: 1.1rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s;
+      text-align: center;
+    }
+
+    #game-menu .menu-btn.primary {
+      background: #2ecc71;
+      color: #fff;
+    }
+
+    #game-menu .menu-btn.primary:hover {
+      background: #27ae60;
+    }
+
+    #game-menu .menu-btn.secondary {
+      background: #3498db;
+      color: #fff;
+    }
+
+    #game-menu .menu-btn.secondary:hover {
+      background: #2980b9;
+    }
+
+    #game-menu .menu-btn.danger {
+      background: #e74c3c;
+      color: #fff;
+    }
+
+    #game-menu .menu-btn.danger:hover {
+      background: #c0392b;
+    }
+
+    #game-menu .menu-slider-group {
+      width: 240px;
+      text-align: center;
+    }
+
+    #game-menu .menu-slider-group label {
+      display: block;
+      color: #bdc3c7;
+      font-size: 0.9rem;
+      margin-bottom: 6px;
+    }
+
+    #game-menu .menu-slider-group .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #game-menu .menu-slider-group .slider-label {
+      color: #95a5a6;
+      font-size: 0.75rem;
+      flex-shrink: 0;
+    }
+
+    #game-menu .menu-slider-group input[type="range"] {
+      flex: 1;
+      accent-color: #3498db;
+      height: 6px;
+      cursor: pointer;
+    }
+
+    #game-menu .menu-slider-group .slider-status {
+      color: #ecf0f1;
+      font-size: 0.85rem;
+      margin-top: 4px;
+    }
+
+    #game-menu .menu-note {
+      width: 240px;
+      margin-top: -8px;
+      margin-bottom: -4px;
+      color: #95a5a6;
+      font-size: 0.75rem;
+      line-height: 1.35;
+      text-align: center;
+    }
+
+    #game-menu .menu-howto,
+    #game-menu .menu-about {
+      max-width: 560px;
+      align-items: stretch;
+      text-align: left;
+      color: #ecf0f1;
+      gap: 14px;
+    }
+
+    #game-menu .menu-howto h2,
+    #game-menu .menu-howto h3,
+    #game-menu .menu-about h2,
+    #game-menu .menu-about h3 {
+      margin: 0;
+    }
+
+    #game-menu .menu-howto h2,
+    #game-menu .menu-howto h3,
+    #game-menu .menu-howto p,
+    #game-menu .menu-about h2,
+    #game-menu .menu-about h3,
+    #game-menu .menu-about p {
+      width: 100%;
+    }
+
+    #game-menu .menu-howto p,
+    #game-menu .menu-about p {
+      line-height: 1.45;
+    }
+
+    #game-menu .menu-howto .howto-card,
+    #game-menu .menu-about .about-card {
+      width: 100%;
+      background: rgba(255,255,255,0.08);
+      border-radius: 14px;
+      padding: 16px;
+    }
+
+    #game-menu .menu-howto ol {
+      margin: 10px 0 0 20px;
+      padding: 0;
+      line-height: 1.5;
+    }
+
+    #game-menu .menu-howto li + li {
+      margin-top: 8px;
+    }
+
+    #game-menu .menu-about a {
+      color: #7dd3fc;
+    }
+
+    /* ---------- quit notification dialog ---------- */
+
+    #quit-dialog {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 200;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+    }
+
+    #quit-dialog.open {
+      display: flex;
+    }
+
+    #quit-dialog .quit-message {
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: #e74c3c;
+      text-align: center;
+    }
+
+    #quit-dialog .quit-btn {
+      padding: 14px 40px;
+      font-size: 1.1rem;
+      font-weight: 600;
+      background: #2ecc71;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    #quit-dialog .quit-btn:hover {
+      background: #27ae60;
+    }
+
+    /* ---------- local CPU setup overlay ---------- */
+
+    #cpu-setup-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.88);
+      z-index: 130;
+      overflow-y: auto;
+      padding: 24px 12px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    #cpu-setup-overlay.open {
+      display: block;
+    }
+
+    #cpu-setup-overlay .setup-sheet {
+      width: min(560px, 100%);
+      min-height: calc(100% - 48px);
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 16px;
+      color: #ecf0f1;
+    }
+
+    #cpu-setup-overlay .setup-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    #cpu-setup-overlay .setup-back-btn,
+    #cpu-setup-overlay .setup-close-btn,
+    #cpu-setup-overlay .setup-help-btn {
+      border: none;
+      cursor: pointer;
+      color: #ecf0f1;
+    }
+
+    #cpu-setup-overlay .setup-back-btn {
+      padding: 8px 12px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.08);
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+
+    #cpu-setup-overlay .setup-close-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: rgba(17, 24, 39, 0.72);
+      font-size: 1.1rem;
+      font-weight: 700;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+
+    #cpu-setup-overlay .setup-title-block {
+      text-align: left;
+    }
+
+    #cpu-setup-overlay h2 {
+      margin: 0;
+      font-size: 1.7rem;
+    }
+
+    #cpu-setup-overlay .setup-subtitle {
+      margin-top: 8px;
+      color: #bdc3c7;
+      line-height: 1.45;
+    }
+
+    #cpu-setup-overlay .setup-options,
+    #cpu-setup-overlay .setup-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    #cpu-setup-overlay .setup-player-card,
+    #cpu-setup-overlay .setup-summary-card {
+      background: rgba(255,255,255,0.08);
+      border-radius: 14px;
+      padding: 16px;
+      text-align: left;
+    }
+
+    #cpu-setup-overlay .setup-player-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    #cpu-setup-overlay .setup-player-name {
+      flex: 1;
+      font-size: 1.1rem;
+      font-weight: 700;
+    }
+
+    #cpu-setup-overlay .setup-help-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: rgba(52, 152, 219, 0.3);
+      font-size: 1rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    #cpu-setup-overlay .setup-description {
+      margin-top: 12px;
+      color: #d5dbdb;
+      line-height: 1.45;
+    }
+
+    #cpu-setup-overlay .setup-description.hidden {
+      display: none;
+    }
+
+    #cpu-setup-overlay .setup-select-btn,
+    #cpu-setup-overlay .setup-primary-btn,
+    #cpu-setup-overlay .setup-secondary-btn {
+      display: block;
+      width: 100%;
+      padding: 14px 16px;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+    }
+
+    #cpu-setup-overlay .setup-select-btn,
+    #cpu-setup-overlay .setup-primary-btn {
+      background: #3498db;
+      color: #fff;
+    }
+
+    #cpu-setup-overlay .setup-secondary-btn {
+      background: rgba(255,255,255,0.08);
+      color: #ecf0f1;
+    }
+  </style>
+</head>
+<body>
+  <!-- Join Screen -->
+  <div id="join-screen">
+    <div class="join-header">
+      <div class="join-title-wrap">
+        <img class="join-title-icon" src="icon.png" alt="" aria-hidden="true">
+        <h1 class="join-title">Mancala</h1>
+        <img class="join-title-icon" src="icon.png" alt="" aria-hidden="true">
+      </div>
+      <button id="join-how-to-play-btn" class="btn btn-secondary" onclick="openHowToPlay()">How to Play</button>
+    </div>
+    <p id="join-intro" style="margin-bottom:16px; opacity:0.8;">A 2-player game. Join a seat to play!</p>
+    <div id="slot1" class="slot open">Player 1: waiting...</div>
+    <div id="slot2" class="slot open">Player 2: waiting...</div>
+    <div class="join-actions">
+      <button id="join-btn" class="btn" onclick="tryJoin()">Join Game</button>
+      <button id="hotseat-btn" class="btn btn-secondary" onclick="startHotseat()">2 Players 1 Screen</button>
+      <button id="player-vs-cpu-btn" class="btn btn-secondary" onclick="openPlayerVsCpuSetup()">Player vs CPU</button>
+      <button id="cpu-vs-cpu-btn" class="btn btn-secondary" onclick="openCpuVsCpuSetup()">CPU vs CPU</button>
+    </div>
+    <p id="join-status" style="margin-top:12px; font-size:0.9rem; opacity:0.6;"></p>
+  </div>
+
+  <div id="cpu-setup-overlay">
+    <div class="setup-sheet">
+      <div class="setup-header">
+        <button class="setup-back-btn" id="cpu-setup-back-btn" onclick="cpuSetupBack()">Back</button>
+        <button class="setup-close-btn" id="cpu-setup-close-btn" onclick="closeCpuSetup()" aria-label="Close CPU setup">✕</button>
+      </div>
+      <div class="setup-title-block">
+        <h2 id="cpu-setup-title">Choose Opponent</h2>
+        <p class="setup-subtitle" id="cpu-setup-subtitle"></p>
+      </div>
+      <div id="cpu-setup-content"></div>
+    </div>
+  </div>
+
+  <button id="menu-open-btn" onclick="toggleMenuButton()" style="display:none;" aria-label="Open menu" title="Open menu">⚙</button>
+
+  <!-- Game Screen -->
+  <div id="game-screen">
+    <div id="board-frame">
+      <div id="board-center">
+        <div class="board">
+          <div class="store theirs" id="store-top">
+            <span id="store-top-val">0</span>
+          </div>
+          <div class="pits-area">
+            <div class="pits-row" id="top-row"></div>
+            <div class="pits-row" id="bottom-row"></div>
+          </div>
+          <div class="store mine" id="store-bottom">
+            <span id="store-bottom-val">0</span>
+          </div>
+          <div id="board-animation-layer"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <div class="scoreboard" id="scoreboard">
+      <div class="player-score" id="score-left">
+        <div class="name" id="score-left-name">Player 1</div>
+        <div class="score" id="score-left-val">0</div>
+      </div>
+      <div class="player-score" id="score-right">
+        <div class="name" id="score-right-name">Player 2</div>
+        <div class="score" id="score-right-val">0</div>
+      </div>
+    </div>
+
+    <div class="winner-banner" id="winner-banner"></div>
+
+    <div class="actions" id="actions"></div>
+  </div>
+
+  <!-- Game Menu Overlay -->
+  <div id="game-menu">
+    <div class="menu-sheet" id="menu-main-sheet">
+      <h2>Menu</h2>
+      <button class="menu-btn secondary" id="menu-how-to-play" onclick="showHowToPlay()">How to Play</button>
+      <div class="menu-note" id="menu-display-tip">Tip: click either score store to switch between marbles and numbers.</div>
+      <button class="menu-btn secondary" id="menu-toggle-display" onclick="menuToggleDisplay()">Switch to Numbers</button>
+      <button class="menu-btn secondary" id="menu-toggle-hud" onclick="menuToggleHud()">Show Turn Info and Scores</button>
+      <div class="menu-note" id="menu-button-tip">Tip: press and hold either score store to open the menu.</div>
+      <button class="menu-btn secondary" id="menu-toggle-menu-button" onclick="menuToggleMenuButton()">Hide Gear Button</button>
+      <button class="menu-btn secondary" id="menu-rotate" onclick="menuRotateBoard()">Rotation: Auto</button>
+      <div class="menu-slider-group">
+        <label for="menu-board-size">Board Size</label>
+        <div class="slider-row">
+          <span class="slider-label">Smaller</span>
+          <input type="range" id="menu-board-size" min="50" max="100" value="100" oninput="menuBoardSizeChanged(this.value)">
+          <span class="slider-label">Fill</span>
+        </div>
+        <div class="slider-status" id="menu-board-size-status">100% of fit</div>
+      </div>
+      <div class="menu-slider-group">
+        <label for="menu-anim-speed">Sow Animation</label>
+        <div class="slider-row">
+          <span class="slider-label">Off</span>
+          <input type="range" id="menu-anim-speed" min="0" max="100" value="0" oninput="menuAnimSpeedChanged(this.value)">
+          <span class="slider-label">Fast</span>
+        </div>
+        <div class="slider-status" id="menu-anim-status">Off</div>
+      </div>
+      <button class="menu-btn danger" id="menu-quit" onclick="menuQuit()">Quit Game</button>
+      <button class="menu-btn secondary" id="menu-about" onclick="showAbout()">About</button>
+    </div>
+    <div class="menu-sheet menu-howto hidden" id="menu-howto-sheet">
+      <h2>How to Play</h2>
+      <div class="howto-card">
+        <h3>Goal</h3>
+        <p>Collect more seeds in your store than the other player by the time the board runs out.</p>
+      </div>
+      <div class="howto-card">
+        <h3>Setup</h3>
+        <p>Each small bowl starts with 4 seeds. Your store is the tall bowl beside your row.</p>
+      </div>
+      <div class="howto-card">
+        <h3>On your turn</h3>
+        <ol>
+          <li>Pick one non-empty bowl from your side.</li>
+          <li>Take all seeds from it.</li>
+          <li>Drop one seed into each next bowl as you go around the board.</li>
+          <li>Put seeds into your own store, but skip your opponent&apos;s store.</li>
+        </ol>
+      </div>
+      <div class="howto-card">
+        <h3>Special rules</h3>
+        <ol>
+          <li>If your last seed lands in your store, you get another turn.</li>
+          <li>If your last seed lands in an empty bowl on your side and there are seeds in the opposite bowl, you capture both your last seed and all opposite seeds into your store.</li>
+        </ol>
+      </div>
+      <div class="howto-card">
+        <h3>How the game ends</h3>
+        <p>When one side has no seeds left in its small bowls, the game ends. All remaining seeds on the other side go into that player&apos;s store. The higher store total wins.</p>
+      </div>
+    </div>
+    <div class="menu-sheet menu-about hidden" id="menu-about-sheet">
+      <h2>About</h2>
+      <div class="about-card">
+        <p>Created by <a id="about-author-link" href="https://moparisthebest.com" target="_blank" rel="noopener noreferrer">moparisthebest</a> yelling at an LLM. Licensed <a id="about-license-link" href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">AGPLv3</a>. Please share and enjoy!</p>
+      </div>
+      <div class="about-card">
+        <h3>Multiplayer webxdc</h3>
+        <p>Available as multiplayer webxdc game <a id="about-xdc-link" href="./mancala.xdc" target="_blank" rel="noopener noreferrer">here</a>.</p>
+      </div>
+      <div class="about-card">
+        <h3>Play in Your Browser or Install</h3>
+        <p>You can play Mancala in your browser or install it as an app from <a id="about-pwa-link" href="https://mancala.moparisthe.best/" target="_blank" rel="noopener noreferrer">https://mancala.moparisthe.best/</a>. In most browsers, open that site and choose <strong>Install App</strong> or <strong>Add to Home Screen</strong> for an app-like experience with an icon on your device.</p>
+      </div>
+      <div class="about-card">
+        <h3>Source code</h3>
+        <p>Source code available <a id="about-source-forgejo-link" href="https://code.moparisthe.best/moparisthebest/mancala" target="_blank" rel="noopener noreferrer">here</a>, <a id="about-source-github-link" href="https://github.com/moparisthebest/mancala" target="_blank" rel="noopener noreferrer">here</a>, or this file you are looking at.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quit Notification Dialog -->
+  <div id="quit-dialog">
+    <div class="quit-message" id="quit-message">Your opponent quit!</div>
+    <button class="quit-btn" id="quit-ok" onclick="dismissQuitDialog()">OK</button>
+  </div>
+
+  <script>
+    // =====================================================================
+    // CONSTANTS
+    // =====================================================================
+    const PITS = 6;
+    const SEEDS = 4;
+
+    // =====================================================================
+    // MARBLE COLORS — edit this array to add/change/remove colors
+    // Each entry: [highlight, base] for radial-gradient
+    // =====================================================================
+    const MARBLE_COLORS = [
+      ['#7ec8e3', '#1a5276'],  // glass blue
+      ['#e74c3c', '#641e16'],  // deep crimson
+      ['#2ecc71', '#0e6b34'],  // emerald green
+      ['#f39c12', '#7d5006'],  // amber orange
+      ['#9b59b6', '#4a235a'],  // amethyst purple
+    ];
+
+    // =====================================================================
+    // DISPLAY MODE (local only, not synced)
+    // =====================================================================
+    const BOARD_MARGIN_PX = 12;
+    const BOARD_ROTATION_OPTIONS = ['auto', '0', '90', '180', '270'];
+    const LOCAL_SETTINGS_KEYS = Object.freeze({
+      displayMode: 'mancala-displayMode',
+      boardRotation: 'mancala-boardRotation',
+      boardSizePercent: 'mancala-boardSizePercent',
+      animSpeed: 'mancala-animSpeed',
+      showHud: 'mancala-showHud',
+      showMenuButton: 'mancala-showMenuButton',
+    });
+    const DEFAULT_LOCAL_SETTINGS = Object.freeze({
+      // Visual seed rendering mode for pits/stores. Tests should set this
+      // explicitly because switching between marbles and numbers changes markup.
+      displayMode: 'marbles',
+      // Board rotation mode. "auto" picks the best fit for the viewport.
+      boardRotation: 'auto',
+      // Board scale as a percent of the best-fit size.
+      boardSizePercent: 100,
+      // Preferred sow animation speed. 0 disables animations.
+      animSpeed: 67,
+      // Turn/status HUD visibility.
+      showHud: false,
+      // Whether the closed-state gear button is shown during gameplay.
+      showMenuButton: true,
+    });
+
+    function normalizeBoardRotationMode(value) {
+      const normalized = value == null ? DEFAULT_LOCAL_SETTINGS.boardRotation : String(value);
+      return BOARD_ROTATION_OPTIONS.includes(normalized) ? normalized : DEFAULT_LOCAL_SETTINGS.boardRotation;
+    }
+
+    function normalizeBoardSizePercent(value) {
+      const parsed = parseInt(value, 10);
+      if (!Number.isFinite(parsed)) return DEFAULT_LOCAL_SETTINGS.boardSizePercent;
+      return Math.max(50, Math.min(100, parsed));
+    }
+
+    function normalizeAnimSpeed(value) {
+      const parsed = parseInt(value, 10);
+      if (!Number.isFinite(parsed)) return DEFAULT_LOCAL_SETTINGS.animSpeed; // ~700ms per seed
+      return Math.max(0, Math.min(100, parsed));
+    }
+
+    function loadLocalSettingsFromStorage() {
+      return {
+        displayMode: localStorage.getItem(LOCAL_SETTINGS_KEYS.displayMode) || DEFAULT_LOCAL_SETTINGS.displayMode,
+        boardRotation: normalizeBoardRotationMode(localStorage.getItem(LOCAL_SETTINGS_KEYS.boardRotation)),
+        boardSizePercent: normalizeBoardSizePercent(localStorage.getItem(LOCAL_SETTINGS_KEYS.boardSizePercent)),
+        animSpeed: normalizeAnimSpeed(localStorage.getItem(LOCAL_SETTINGS_KEYS.animSpeed)),
+        showHud: localStorage.getItem(LOCAL_SETTINGS_KEYS.showHud) === 'true'
+          ? true
+          : DEFAULT_LOCAL_SETTINGS.showHud,
+        showMenuButton: localStorage.getItem(LOCAL_SETTINGS_KEYS.showMenuButton) === 'false'
+          ? false
+          : DEFAULT_LOCAL_SETTINGS.showMenuButton,
+      };
+    }
+
+    function applyLocalSettings(settings) {
+      displayMode = settings.displayMode;
+      boardRotationMode = settings.boardRotation;
+      boardSizePercent = settings.boardSizePercent;
+      preferredAnimSpeed = settings.animSpeed;
+      animSpeed = displayMode === 'numbers' ? 0 : preferredAnimSpeed; // 0 = off, 1-100 = slow-to-fast
+      showHud = settings.showHud;
+      showMenuButton = settings.showMenuButton;
+    }
+
+    function reloadLocalSettingsFromStorage() {
+      applyLocalSettings(loadLocalSettingsFromStorage());
+    }
+
+    let displayMode;
+    let boardRotationMode;
+    let boardSizePercent;
+    let preferredAnimSpeed;
+    let animSpeed;
+    let showHud;
+    let showMenuButton;
+    reloadLocalSettingsFromStorage();
+    let animating = false;  // true while sow animation is in progress (blocks input)
+    let pendingMoveQueue = [];  // queue of opponent moves that arrived during our animation
+    let pendingMenuMoveQueue = [];  // queue of opponent moves deferred until the menu closes
+    let hotseatMode = false;     // true = local 2-player mode, no networking
+    let suppressBoardTransformTransition = true;
+
+    // Simple seeded PRNG (mulberry32) — deterministic from a 32-bit seed
+    function mulberry32(seed) {
+      return function() {
+        seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+        let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      };
+    }
+
+    function shuffleArray(arr, rng) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    }
+
+    const TOTAL_MARBLES = PITS * SEEDS * 2;
+
+    // Assign a color class to each marble ID (0..47). Done once per game.
+    let marbleColors = []; // marbleColors[id] = color index 0..N-1
+    let marblePool = [];
+    let marbleLayoutResetPending = true;
+    function assignMarbleColors(seed) {
+      const colors = [];
+      for (let i = 0; i < TOTAL_MARBLES; i++) {
+        colors.push(i % MARBLE_COLORS.length);
+      }
+      shuffleArray(colors, mulberry32(seed));
+      marbleColors = colors;
+      marblePool = Array.from({ length: TOTAL_MARBLES }, function(_, id) {
+        return createMarble(id);
+      });
+      marbleLayoutResetPending = true;
+    }
+
+    function toggleDisplayMode() {
+      if (animating) return false;
+      displayMode = displayMode === 'marbles' ? 'numbers' : 'marbles';
+      localStorage.setItem(LOCAL_SETTINGS_KEYS.displayMode, displayMode);
+      animSpeed = displayMode === 'numbers' ? 0 : preferredAnimSpeed;
+      render();
+      return true;
+    }
+
+    // Max marbles that fit visually inside a circular pit in the concave layout.
+    const PIT_MARBLE_CAPACITY = 10;
+    // Max marbles per overflow row
+    const OVERFLOW_ROW_SIZE = 4;
+
+    // Create a marble div with a permanent color class based on its ID.
+    // The ID never changes, so the color never changes.
+    function createMarble(id) {
+      const m = document.createElement('div');
+      m.className = 'marble mc-' + marbleColors[id];
+      m.dataset.marbleId = id;
+      return m;
+    }
+
+    function getMarbleNode(id) {
+      if (!marblePool.length) assignMarbleColors(state.colorSeed);
+      return marblePool[id];
+    }
+
+    function getCount(value) {
+      return Array.isArray(value) ? value.length : Number(value || 0);
+    }
+
+    function clonePitCounts(pits) {
+      return pits.map(function(row) {
+        return row.map(getCount);
+      });
+    }
+
+    function cloneStoreCounts(stores) {
+      return stores.map(getCount);
+    }
+
+    function getInitialMarblePlacement() {
+      const pits = [[], []];
+      let nextId = 0;
+      for (let playerIdx = 0; playerIdx < 2; playerIdx++) {
+        pits[playerIdx] = [];
+        for (let pitIdx = 0; pitIdx < PITS; pitIdx++) {
+          const ids = [];
+          for (let seedIdx = 0; seedIdx < SEEDS; seedIdx++) ids.push(nextId++);
+          pits[playerIdx].push(ids);
+        }
+      }
+      return { pits, stores: [[], []] };
+    }
+
+    function getOffsetWithinAncestor(el, ancestor) {
+      let left = 0;
+      let top = 0;
+      let node = el;
+      while (node && node !== ancestor) {
+        left += node.offsetLeft;
+        top += node.offsetTop;
+        node = node.offsetParent;
+      }
+      return { left, top };
+    }
+
+    // Compute concave bowl positions for marbles inside a circular pit.
+    // Returns array of {x, y} in percentage (0-100) of the container.
+    // The layout mimics marbles settling into a concave bowl:
+    //  - 1 marble: center
+    //  - 2-6: single ring
+    //  - 7+: outer ring + inner marbles
+    function computeBowlPositions(count) {
+      if (count === 0) return [];
+      if (count === 1) return [{ x: 50, y: 50 }];
+
+      const positions = [];
+
+      if (count <= 6) {
+        // Single ring around center
+        const radius = count <= 3 ? 18 : 24;
+        const startAngle = -Math.PI / 2; // top
+        for (let i = 0; i < count; i++) {
+          const angle = startAngle + (2 * Math.PI * i) / count;
+          positions.push({
+            x: 50 + radius * Math.cos(angle),
+            y: 50 + radius * Math.sin(angle),
+          });
+        }
+      } else {
+        // Outer ring + inner marbles
+        const outerCount = Math.min(count, 7);
+        const innerCount = count - outerCount;
+        const outerRadius = 27;
+        const startAngle = -Math.PI / 2;
+
+        for (let i = 0; i < outerCount; i++) {
+          const angle = startAngle + (2 * Math.PI * i) / outerCount;
+          positions.push({
+            x: 50 + outerRadius * Math.cos(angle),
+            y: 50 + outerRadius * Math.sin(angle),
+          });
+        }
+
+        if (innerCount === 1) {
+          positions.push({ x: 50, y: 50 });
+        } else if (innerCount === 2) {
+          positions.push({ x: 42, y: 50 });
+          positions.push({ x: 58, y: 50 });
+        } else if (innerCount >= 3) {
+          const innerRadius = 12;
+          for (let i = 0; i < innerCount; i++) {
+            const angle = startAngle + (2 * Math.PI * i) / innerCount;
+            positions.push({
+              x: 50 + innerRadius * Math.cos(angle),
+              y: 50 + innerRadius * Math.sin(angle),
+            });
+          }
+        }
+      }
+
+      return positions;
+    }
+
+    // Store layout: fill vertical columns left-to-right.
+    // Within each column, marbles start from the center and alternate
+    // outward (center, up, down, up, down, ...) like filling a bowl.
+    // Up to STORE_COLS columns fit inside the store.
+    // Returns array of {x, y} in percentage (0-100) of the store container.
+    const STORE_COLS = 4;
+    const STORE_ROWS_PER_COL = 11;
+    const STORE_MARBLE_CAPACITY = STORE_COLS * STORE_ROWS_PER_COL; // 44
+
+    // Build center-out slot order for n slots.
+    // E.g. n=5 slots [0,1,2,3,4]: fill order is [2, 1, 3, 0, 4]
+    function centerOutOrder(n) {
+      const order = [];
+      const mid = Math.floor(n / 2);
+      order.push(mid);
+      for (let d = 1; order.length < n; d++) {
+        if (mid - d >= 0) order.push(mid - d);
+        if (mid + d < n) order.push(mid + d);
+      }
+      return order;
+    }
+
+    function computeStorePositions(count) {
+      const positions = [];
+      // Usable area: horizontally ~20%-80%, vertically ~10%-90%
+      const xMin = 20, xMax = 80;
+      const yMin = 8, yMax = 92;
+      const cols = Math.min(STORE_COLS, Math.ceil(count / STORE_ROWS_PER_COL));
+      // Fixed column spacing: same as if all STORE_COLS columns were present.
+      // This keeps a consistent small gap between columns regardless of count.
+      const fullColSpacing = STORE_COLS > 1 ? (xMax - xMin) / (STORE_COLS - 1) : 0;
+      const totalWidth = (cols - 1) * fullColSpacing;
+      const colStart = 50 - totalWidth / 2;
+
+      // Fixed spacing: same as a full column of STORE_ROWS_PER_COL marbles.
+      // This keeps marbles close together even when there are only a few.
+      const fullSpacing = (yMax - yMin) / (STORE_ROWS_PER_COL - 1);
+
+      for (let col = 0; col < cols; col++) {
+        const colMarbles = Math.min(STORE_ROWS_PER_COL, count - col * STORE_ROWS_PER_COL);
+        const slotOrder = centerOutOrder(colMarbles);
+        // Center this column's marbles vertically using fixed spacing
+        const totalHeight = (colMarbles - 1) * fullSpacing;
+        const rowStart = 50 - totalHeight / 2;
+        for (let m = 0; m < colMarbles; m++) {
+          const slot = slotOrder[m]; // which vertical slot this marble goes to
+          positions.push({
+            x: colStart + col * fullColSpacing,
+            y: rowStart + slot * fullSpacing,
+          });
+        }
+      }
+      return positions;
+    }
+
+    // overflowDir: null (no overflow, e.g. stores), 'top', or 'bottom'
+    // isMirrored: true for opponent pits (reverse x-axis for perspective)
+    function renderContent(el, marbleIds, overflowDir, isMirrored) {
+      if (displayMode === 'marbles') {
+        if (overflowDir) el.textContent = '';
+
+        const count = marbleIds.length;
+        if (!overflowDir) {
+          // Store: use column-first absolute positioning
+          const innerCount = Math.min(count, STORE_MARBLE_CAPACITY);
+          const overflowCount = count - innerCount;
+
+          const container = document.createElement('div');
+          container.className = 'marbles';
+          const positions = computeStorePositions(innerCount);
+          for (let i = 0; i < innerCount; i++) {
+            const marble = createMarble(marbleIds[i]);
+            marble.style.left = 'calc(' + positions[i].x + '% - min(6px, 1.1vmin))';
+            marble.style.top = 'calc(' + positions[i].y + '% - min(6px, 1.1vmin))';
+            container.appendChild(marble);
+          }
+          el.appendChild(container);
+
+          if (overflowCount > 0) {
+            const overflowUp = document.createElement('div');
+            overflowUp.className = 'marbles-overflow overflow-top';
+            const overflowDown = document.createElement('div');
+            overflowDown.className = 'marbles-overflow overflow-bottom';
+            for (let i = 0; i < overflowCount; i++) {
+              const marble = createMarble(marbleIds[innerCount + i]);
+              if (i % 2 === 0) {
+                overflowUp.appendChild(marble);
+              } else {
+                overflowDown.appendChild(marble);
+              }
+            }
+            if (overflowUp.children.length > 0) el.appendChild(overflowUp);
+            if (overflowDown.children.length > 0) el.appendChild(overflowDown);
+          }
+        } else {
+          // Pit: use concave bowl layout
+          const innerCount = count > PIT_MARBLE_CAPACITY
+            ? PIT_MARBLE_CAPACITY : count;
+          const overflowCount = count - innerCount;
+
+          const container = document.createElement('div');
+          container.className = 'marbles';
+          const positions = computeBowlPositions(innerCount);
+          for (let i = 0; i < innerCount; i++) {
+            const marble = createMarble(marbleIds[i]);
+            let px = positions[i].x;
+            let py = positions[i].y;
+            if (isMirrored) {
+              px = 100 - px;
+              py = 100 - py;
+            }
+            marble.style.left = 'calc(' + px + '% - min(5px, 1vmin))';
+            marble.style.top = 'calc(' + py + '% - min(5px, 1vmin))';
+            container.appendChild(marble);
+          }
+          el.appendChild(container);
+
+          if (overflowCount > 0) {
+            const overflow = document.createElement('div');
+            overflow.className = 'marbles-overflow overflow-' + overflowDir;
+            for (let i = innerCount; i < count; i++) {
+              overflow.appendChild(createMarble(marbleIds[i]));
+            }
+            el.appendChild(overflow);
+          }
+        }
+      } else {
+        el.textContent = marbleIds.length;
+      }
+    }
+
+    // =====================================================================
+    // STATE
+    // =====================================================================
+    let state = initState();
+    window.pwaServiceWorkerRegistration = null;
+    window.pwaServiceWorkerRegistrationError = '';
+
+    function getWebxdcRuntime() {
+      const runtime = window.webxdc;
+      if (!runtime) return null;
+      if (typeof runtime.sendUpdate !== 'function') return null;
+      if (typeof runtime.setUpdateListener !== 'function') return null;
+      return runtime;
+    }
+
+    function isWebxdcAvailable() {
+      return !!getWebxdcRuntime();
+    }
+
+    function getWebxdcSelfAddr() {
+      const runtime = getWebxdcRuntime();
+      return runtime && typeof runtime.selfAddr === 'string' ? runtime.selfAddr : null;
+    }
+
+    function getWebxdcSelfName() {
+      const runtime = getWebxdcRuntime();
+      return runtime && typeof runtime.selfName === 'string' ? runtime.selfName : '';
+    }
+
+    function sendWebxdcUpdate(update, desc) {
+      const runtime = getWebxdcRuntime();
+      if (!runtime) return false;
+      runtime.sendUpdate(update, desc);
+      return true;
+    }
+
+    function initState() {
+      const seed = (Math.random() * 0xFFFFFFFF) >>> 0;
+      assignMarbleColors(seed);
+      return {
+        player1: null,
+        player2: null,
+        pits: [
+          Array.from({ length: PITS }, function() { return SEEDS; }),
+          Array.from({ length: PITS }, function() { return SEEDS; }),
+        ],
+        stores: [0, 0],
+        currentPlayer: 0,
+        gameOver: false,
+        colorSeed: seed,
+      };
+    }
+
+    function initPlainWebPwa() {
+      if (isWebxdcAvailable()) return;
+      if (!('serviceWorker' in navigator)) return;
+
+      function registerServiceWorker() {
+        navigator.serviceWorker.register('pwa-sw.js').then(function(registration) {
+          window.pwaServiceWorkerRegistration = registration;
+          window.pwaServiceWorkerRegistrationError = '';
+        }).catch(function(err) {
+          window.pwaServiceWorkerRegistration = null;
+          window.pwaServiceWorkerRegistrationError = String(err);
+          console.error('PWA service worker registration failed:', err);
+        });
+      }
+
+      if (document.readyState === 'complete') registerServiceWorker();
+      else window.addEventListener('load', registerServiceWorker, { once: true });
+    }
+
+    function updateAboutLinks() {
+      const xdcLink = document.getElementById('about-xdc-link');
+      if (!xdcLink) return;
+      const href = isWebxdcAvailable()
+        ? 'https://mancala.moparisthe.best/mancala.xdc'
+        : './mancala.xdc';
+      xdcLink.href = href;
+    }
+
+    // =====================================================================
+    // LOCAL CPU PLAYERS
+    // Add new automated players here. Each player only chooses a pit index;
+    // the game engine still validates and executes the move.
+    // =====================================================================
+    function simulateMove(boardState, playerIdx, pitIdx) {
+      if (!Number.isInteger(pitIdx) || pitIdx < 0 || pitIdx >= PITS) return null;
+
+      const pits = clonePitCounts(boardState.pits);
+      const stores = cloneStoreCounts(boardState.stores);
+      const opponentIdx = 1 - playerIdx;
+
+      let seeds = pits[playerIdx][pitIdx];
+      if (seeds === 0) {
+        return {
+          pits,
+          stores,
+          currentPlayer: boardState.currentPlayer,
+          gameOver: boardState.gameOver,
+          sowPath: [],
+          capture: null,
+          collectedPits: [],
+          extraTurn: false,
+          scoreDelta: 0,
+        };
+      }
+
+      pits[playerIdx][pitIdx] = 0;
+
+      let pos = pitIdx;
+      let extraTurn = false;
+      let lastSide = -1;
+      let lastPitIdx = -1;
+      const sowPath = [];
+      let capture = null;
+      const collectedPits = [];
+
+      while (seeds > 0) {
+        pos++;
+        if (pos > 13) pos = 0;
+        if (pos === 13) continue;
+        sowPath.push(pos);
+        seeds--;
+
+        if (pos >= 0 && pos <= 5) {
+          pits[playerIdx][pos]++;
+          lastSide = 0;
+          lastPitIdx = pos;
+        } else if (pos === 6) {
+          stores[playerIdx]++;
+          lastSide = 1;
+          lastPitIdx = -1;
+        } else if (pos >= 7 && pos <= 12) {
+          const oppPitIdx = pos - 7;
+          pits[opponentIdx][oppPitIdx]++;
+          lastSide = 2;
+          lastPitIdx = oppPitIdx;
+        }
+      }
+
+      if (lastSide === 1) extraTurn = true;
+
+      if (lastSide === 0 && pits[playerIdx][lastPitIdx] === 1) {
+        const oppositeIdx = PITS - 1 - lastPitIdx;
+        if (pits[opponentIdx][oppositeIdx] > 0) {
+          const captured = pits[playerIdx][lastPitIdx] + pits[opponentIdx][oppositeIdx];
+          stores[playerIdx] += captured;
+          pits[playerIdx][lastPitIdx] = 0;
+          pits[opponentIdx][oppositeIdx] = 0;
+          capture = { landingPitIdx: lastPitIdx, oppositePitIdx: oppositeIdx };
+        }
+      }
+
+      let currentPlayer = extraTurn ? playerIdx : opponentIdx;
+      let gameOver = false;
+      const p0empty = pits[0].every(function(count) { return count === 0; });
+      const p1empty = pits[1].every(function(count) { return count === 0; });
+
+      if (p0empty || p1empty) {
+        for (let i = 0; i < PITS; i++) {
+          if (pits[0][i] > 0) collectedPits.push({ playerIdx: 0, pitIdx: i });
+          if (pits[1][i] > 0) collectedPits.push({ playerIdx: 1, pitIdx: i });
+          stores[0] += pits[0][i];
+          stores[1] += pits[1][i];
+          pits[0][i] = 0;
+          pits[1][i] = 0;
+        }
+        gameOver = true;
+      }
+
+      return {
+        pits,
+        stores,
+        currentPlayer,
+        gameOver,
+        sowPath,
+        capture,
+        collectedPits,
+        extraTurn,
+        scoreDelta: stores[playerIdx] - boardState.stores[playerIdx],
+      };
+    }
+
+    function chooseClosestToStore(boardState, playerIdx) {
+      for (let pitIdx = PITS - 1; pitIdx >= 0; pitIdx--) {
+        if (boardState.pits[playerIdx][pitIdx] > 0) return pitIdx;
+      }
+      return -1;
+    }
+
+    function chooseFurthestFromStore(boardState, playerIdx) {
+      for (let pitIdx = 0; pitIdx < PITS; pitIdx++) {
+        if (boardState.pits[playerIdx][pitIdx] > 0) return pitIdx;
+      }
+      return -1;
+    }
+
+    function chooseRandomPit(boardState, playerIdx) {
+      const legalPitIndices = [];
+      for (let pitIdx = 0; pitIdx < PITS; pitIdx++) {
+        if (boardState.pits[playerIdx][pitIdx] > 0) legalPitIndices.push(pitIdx);
+      }
+      if (legalPitIndices.length === 0) return -1;
+      return legalPitIndices[Math.floor(Math.random() * legalPitIndices.length)];
+    }
+
+    function getBestRepeatedTurnChainLength(boardState, playerIdx) {
+      let bestChainLength = 0;
+      for (let pitIdx = PITS - 1; pitIdx >= 0; pitIdx--) {
+        if (boardState.pits[playerIdx][pitIdx] === 0) continue;
+        const result = simulateMove(boardState, playerIdx, pitIdx);
+        if (!result || !result.extraTurn || result.gameOver) continue;
+        bestChainLength = Math.max(bestChainLength, 1 + getBestRepeatedTurnChainLength(result, playerIdx));
+      }
+      return bestChainLength;
+    }
+
+    function chooseNextTurn(boardState, playerIdx) {
+      let bestPitIdx = -1;
+      let bestChainLength = 0;
+
+      for (let pitIdx = PITS - 1; pitIdx >= 0; pitIdx--) {
+        if (boardState.pits[playerIdx][pitIdx] === 0) continue;
+        const result = simulateMove(boardState, playerIdx, pitIdx);
+        if (!result || !result.extraTurn || result.gameOver) continue;
+
+        const chainLength = 1 + getBestRepeatedTurnChainLength(result, playerIdx);
+        if (chainLength > bestChainLength || (chainLength === bestChainLength && pitIdx > bestPitIdx)) {
+          bestChainLength = chainLength;
+          bestPitIdx = pitIdx;
+        }
+      }
+
+      return bestPitIdx;
+    }
+
+    function combineChoosers() {
+      const choosers = Array.from(arguments);
+      return function(boardState, playerIdx) {
+        for (let i = 0; i < choosers.length; i++) {
+          const pitIdx = choosers[i](boardState, playerIdx);
+          if (pitIdx > -1) return pitIdx;
+        }
+        return -1;
+      };
+    }
+
+    // This only returns -1 if every chooser in the list returns -1.
+    function chooseRandomChooser() {
+      const choosers = Array.from(arguments);
+      return function(boardState, playerIdx) {
+        const remainingChoosers = choosers.slice();
+        while (remainingChoosers.length > 0) {
+          const chooserIdx = Math.floor(Math.random() * remainingChoosers.length);
+          const chooser = remainingChoosers.splice(chooserIdx, 1)[0];
+          const pitIdx = chooser(boardState, playerIdx);
+          if (pitIdx > -1) return pitIdx;
+        }
+        return -1;
+      };
+    }
+
+    const AVAILABLE_PLAYERS = Object.freeze([
+      {
+        id: 'bob',
+        name: 'Bob',
+        description: 'Always moves the bowl closest to his store.',
+        chooseMove: chooseClosestToStore,
+      },
+      {
+        id: 'bill',
+        name: 'Bill',
+        description: 'Always moves the bowl furthest from his store.',
+        chooseMove: chooseFurthestFromStore,
+      },
+      {
+        id: 'charlie',
+        name: 'Charlie',
+        description: 'Picks a random legal bowl each turn.',
+        chooseMove: chooseRandomPit,
+      },
+      {
+        id: 'jan',
+        name: 'Jan',
+        description: 'Looks for another turn first, then moves the bowl closest to her store.',
+        chooseMove: combineChoosers(chooseNextTurn, chooseClosestToStore),
+      },
+      {
+        id: 'jill',
+        name: 'Jill',
+        description: 'Looks for another turn first, then moves the bowl furthest from her store.',
+        chooseMove: combineChoosers(chooseNextTurn, chooseFurthestFromStore),
+      },
+      {
+        id: 'thomas',
+        name: 'Thomas',
+        description: 'Looks for another turn first, then randomly falls back between several move pickers.',
+        chooseMove: combineChoosers(
+          chooseNextTurn,
+          chooseRandomChooser(chooseClosestToStore, chooseFurthestFromStore, chooseRandomPit)
+        ),
+      },
+    ]);
+    const LOCAL_MODE_TYPES = Object.freeze({
+      hotseat: 'hotseat',
+      playerVsCpu: 'player-vs-cpu',
+      cpuVsCpu: 'cpu-vs-cpu',
+    });
+
+    function createDefaultCpuSetupState() {
+      return {
+        open: false,
+        mode: null,
+        step: null,
+        selectedTopPlayerId: null,
+        selectedBottomPlayerId: null,
+        expandedPlayerId: null,
+      };
+    }
+
+    let localModeType = null;
+    let localAutomatedPlayers = [null, null];
+    let cpuSetupState = createDefaultCpuSetupState();
+    let pendingCpuTurnTimer = null;
+    let cpuTurnDelayMs = 250;
+
+    function isLocalCpuMode() {
+      return localModeType === LOCAL_MODE_TYPES.playerVsCpu || localModeType === LOCAL_MODE_TYPES.cpuVsCpu;
+    }
+
+    function isAutomatedLocalPlayer(playerIdx) {
+      return hotseatMode && !!localAutomatedPlayers[playerIdx];
+    }
+
+    function isHumanLocalPlayer(playerIdx) {
+      return hotseatMode && !isAutomatedLocalPlayer(playerIdx);
+    }
+
+    function cancelPendingCpuTurn() {
+      if (pendingCpuTurnTimer != null) {
+        clearTimeout(pendingCpuTurnTimer);
+        pendingCpuTurnTimer = null;
+      }
+    }
+
+    function resetLocalModeState() {
+      cancelPendingCpuTurn();
+      hotseatMode = false;
+      localModeType = null;
+      localAutomatedPlayers = [null, null];
+    }
+
+    function resetCpuSetupState() {
+      cpuSetupState = createDefaultCpuSetupState();
+    }
+
+    function getAvailablePlayerById(playerId) {
+      return AVAILABLE_PLAYERS.find(function(player) { return player.id === playerId; }) || null;
+    }
+
+    function buildCpuStrategyState() {
+      normalizeStateToCounts();
+      return {
+        pits: clonePitCounts(state.pits),
+        stores: cloneStoreCounts(state.stores),
+        currentPlayer: state.currentPlayer,
+        gameOver: state.gameOver,
+      };
+    }
+
+    function openPlayerVsCpuSetup() {
+      if (state.player1 || state.player2) return;
+      cpuSetupState = {
+        open: true,
+        mode: LOCAL_MODE_TYPES.playerVsCpu,
+        step: 'pick-opponent',
+        selectedTopPlayerId: null,
+        selectedBottomPlayerId: null,
+        expandedPlayerId: null,
+      };
+      renderCpuSetup();
+    }
+
+    function openCpuVsCpuSetup() {
+      if (state.player1 || state.player2) return;
+      cpuSetupState = {
+        open: true,
+        mode: LOCAL_MODE_TYPES.cpuVsCpu,
+        step: 'pick-player1',
+        selectedTopPlayerId: null,
+        selectedBottomPlayerId: null,
+        expandedPlayerId: null,
+      };
+      renderCpuSetup();
+    }
+
+    function closeCpuSetup() {
+      resetCpuSetupState();
+      renderCpuSetup();
+    }
+
+    function cpuSetupBack() {
+      if (!cpuSetupState.open) return;
+      if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) {
+        if (cpuSetupState.step === 'pick-starter') {
+          cpuSetupState.step = 'pick-opponent';
+          cpuSetupState.expandedPlayerId = null;
+          renderCpuSetup();
+          return;
+        }
+      } else if (cpuSetupState.mode === LOCAL_MODE_TYPES.cpuVsCpu) {
+        if (cpuSetupState.step === 'pick-player2') {
+          cpuSetupState.step = 'pick-player1';
+          cpuSetupState.selectedBottomPlayerId = null;
+          cpuSetupState.expandedPlayerId = null;
+          renderCpuSetup();
+          return;
+        }
+      }
+      closeCpuSetup();
+    }
+
+    function toggleCpuSetupDescription(playerId) {
+      if (!cpuSetupState.open) return;
+      cpuSetupState.expandedPlayerId = cpuSetupState.expandedPlayerId === playerId ? null : playerId;
+      renderCpuSetup();
+    }
+
+    function startLocalModeGame(config) {
+      const topPlayer = getAvailablePlayerById(config.topPlayerId);
+      const bottomPlayer = config.bottomPlayerId ? getAvailablePlayerById(config.bottomPlayerId) : null;
+      if (!topPlayer) throw new Error('Missing top local player: ' + config.topPlayerId);
+      if (config.mode === LOCAL_MODE_TYPES.cpuVsCpu && !bottomPlayer) {
+        throw new Error('Missing bottom local CPU player: ' + config.bottomPlayerId);
+      }
+
+      resetLocalModeState();
+      resetCpuSetupState();
+      renderCpuSetup();
+
+      hotseatMode = true;
+      localModeType = config.mode;
+      localAutomatedPlayers = [
+        topPlayer,
+        bottomPlayer,
+      ];
+
+      state = initState();
+      state.player1 = { addr: '__local_top__', name: topPlayer.name };
+      state.player2 = {
+        addr: config.mode === LOCAL_MODE_TYPES.playerVsCpu ? '__local_human__' : '__local_bottom__',
+        name: config.mode === LOCAL_MODE_TYPES.playerVsCpu ? (getWebxdcSelfName() || 'You') : bottomPlayer.name,
+      };
+      state.currentPlayer = config.startingPlayer;
+      assignMarbleColors(state.colorSeed);
+      render();
+    }
+
+    function selectCpuSetupPlayer(playerId) {
+      if (!cpuSetupState.open) return;
+      if (!getAvailablePlayerById(playerId)) return;
+
+      if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) {
+        cpuSetupState.selectedTopPlayerId = playerId;
+        cpuSetupState.step = 'pick-starter';
+        cpuSetupState.expandedPlayerId = null;
+        renderCpuSetup();
+        return;
+      }
+
+      if (cpuSetupState.step === 'pick-player1') {
+        cpuSetupState.selectedTopPlayerId = playerId;
+        cpuSetupState.step = 'pick-player2';
+        cpuSetupState.expandedPlayerId = null;
+        renderCpuSetup();
+        return;
+      }
+
+      cpuSetupState.selectedBottomPlayerId = playerId;
+      startLocalModeGame({
+        mode: LOCAL_MODE_TYPES.cpuVsCpu,
+        topPlayerId: cpuSetupState.selectedTopPlayerId,
+        bottomPlayerId: cpuSetupState.selectedBottomPlayerId,
+        startingPlayer: 0,
+      });
+    }
+
+    function choosePlayerVsCpuStarter(playerIdx) {
+      if (!cpuSetupState.open || cpuSetupState.mode !== LOCAL_MODE_TYPES.playerVsCpu) return;
+      startLocalModeGame({
+        mode: LOCAL_MODE_TYPES.playerVsCpu,
+        topPlayerId: cpuSetupState.selectedTopPlayerId,
+        bottomPlayerId: null,
+        startingPlayer: playerIdx,
+      });
+    }
+
+    function getCpuSetupTitle() {
+      if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) {
+        return cpuSetupState.step === 'pick-starter' ? 'Who Goes First?' : 'Choose Opponent';
+      }
+      return cpuSetupState.step === 'pick-player2' ? 'Choose Player 2' : 'Choose Player 1';
+    }
+
+    function getCpuSetupSubtitle() {
+      if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) {
+        if (cpuSetupState.step === 'pick-starter') {
+          const cpuPlayer = getAvailablePlayerById(cpuSetupState.selectedTopPlayerId);
+          return 'Human stays on the bottom row. Choose whether you or ' + cpuPlayer.name + ' takes the first turn.';
+        }
+        return 'Pick an automated opponent, then choose who gets the first move.';
+      }
+      if (cpuSetupState.step === 'pick-player2') {
+        const topPlayer = getAvailablePlayerById(cpuSetupState.selectedTopPlayerId);
+        return 'Choose the automated player for the bottom row. ' + topPlayer.name + ' will be Player 1 and go first.';
+      }
+      return 'Choose the automated player for the top row. Player 1 will go first.';
+    }
+
+    function renderCpuSetup() {
+      const overlay = document.getElementById('cpu-setup-overlay');
+      const backBtn = document.getElementById('cpu-setup-back-btn');
+      const titleEl = document.getElementById('cpu-setup-title');
+      const subtitleEl = document.getElementById('cpu-setup-subtitle');
+      const contentEl = document.getElementById('cpu-setup-content');
+      if (!overlay || !backBtn || !titleEl || !subtitleEl || !contentEl) return;
+
+      if (!cpuSetupState.open) {
+        overlay.classList.remove('open');
+        contentEl.innerHTML = '';
+        return;
+      }
+
+      overlay.classList.add('open');
+      titleEl.textContent = getCpuSetupTitle();
+      subtitleEl.textContent = getCpuSetupSubtitle();
+      backBtn.style.visibility = cpuSetupState.step === 'pick-opponent' || cpuSetupState.step === 'pick-player1'
+        ? 'hidden'
+        : 'visible';
+
+      if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu && cpuSetupState.step === 'pick-starter') {
+        const cpuPlayer = getAvailablePlayerById(cpuSetupState.selectedTopPlayerId);
+        contentEl.innerHTML =
+          '<div class="setup-summary-card"><strong>Opponent:</strong> ' + cpuPlayer.name + '<br><span class="setup-description">' + cpuPlayer.description + '</span></div>'
+          + '<div class="setup-actions">'
+          + '<button class="setup-primary-btn" id="cpu-setup-human-first-btn" onclick="choosePlayerVsCpuStarter(1)">You go first</button>'
+          + '<button class="setup-secondary-btn" id="cpu-setup-cpu-first-btn" onclick="choosePlayerVsCpuStarter(0)">' + cpuPlayer.name + ' goes first</button>'
+          + '</div>';
+        return;
+      }
+
+      const cards = AVAILABLE_PLAYERS.map(function(player) {
+        const isExpanded = cpuSetupState.expandedPlayerId === player.id;
+        return '<div class="setup-player-card">'
+          + '<div class="setup-player-row">'
+          + '<div class="setup-player-name">' + player.name + '</div>'
+          + '<button class="setup-help-btn" id="cpu-help-' + player.id + '" onclick="toggleCpuSetupDescription(\'' + player.id + '\')" aria-label="How ' + player.name + ' plays" aria-expanded="' + (isExpanded ? 'true' : 'false') + '">?</button>'
+          + '</div>'
+          + '<div class="setup-description' + (isExpanded ? '' : ' hidden') + '" id="cpu-description-' + player.id + '">' + player.description + '</div>'
+          + '<button class="setup-select-btn" id="cpu-select-' + player.id + '" onclick="selectCpuSetupPlayer(\'' + player.id + '\')">Choose ' + player.name + '</button>'
+          + '</div>';
+      }).join('');
+      contentEl.innerHTML = '<div class="setup-options">' + cards + '</div>';
+    }
+
+    function syncCpuTurnScheduling() {
+      cancelPendingCpuTurn();
+      if (!hotseatMode || !isLocalCpuMode() || !bothJoined() || state.gameOver || animating || menuOpen) return;
+      const playerIdx = state.currentPlayer;
+      const controller = localAutomatedPlayers[playerIdx];
+      if (!controller) return;
+
+      pendingCpuTurnTimer = setTimeout(function() {
+        pendingCpuTurnTimer = null;
+        if (!hotseatMode || !isLocalCpuMode() || !bothJoined() || state.gameOver || animating || menuOpen) return;
+        if (state.currentPlayer !== playerIdx) return;
+
+        const strategyState = buildCpuStrategyState();
+        const pitIdx = controller.chooseMove(strategyState, playerIdx);
+        if (!Number.isInteger(pitIdx) || pitIdx < 0 || pitIdx >= PITS) {
+          throw new Error(controller.name + ' chose an invalid pit index: ' + pitIdx);
+        }
+        if (strategyState.pits[playerIdx][pitIdx] === 0) {
+          throw new Error(controller.name + ' chose an empty pit: ' + pitIdx);
+        }
+        handlePitClick(playerIdx, pitIdx);
+      }, cpuTurnDelayMs);
+    }
+
+    // =====================================================================
+    // IDENTITY
+    // =====================================================================
+    function getMyPlayerIndex() {
+      const addr = getWebxdcSelfAddr();
+      if (!addr) return -1;
+      if (state.player1 && state.player1.addr === addr) return 0;
+      if (state.player2 && state.player2.addr === addr) return 1;
+      return -1; // spectator
+    }
+
+    function getPlayer(idx) {
+      return idx === 0 ? state.player1 : state.player2;
+    }
+
+    function basePlayerName(idx) {
+      const p = getPlayer(idx);
+      return p ? p.name : ('Player ' + (idx + 1));
+    }
+
+    function playerName(idx) {
+      const name = basePlayerName(idx);
+      const otherIdx = 1 - idx;
+      if (idx >= 0 && idx <= 1 && getPlayer(idx) && getPlayer(otherIdx) && basePlayerName(otherIdx) === name) {
+        return name + ' (P' + (idx + 1) + ')';
+      }
+      return name;
+    }
+
+    function bothJoined() {
+      return state.player1 !== null && state.player2 !== null;
+    }
+
+    // =====================================================================
+    // APPLY UPDATES (state machine)
+    // =====================================================================
+    function normalizeStateToCounts() {
+      state.pits = clonePitCounts(state.pits);
+      state.stores = cloneStoreCounts(state.stores);
+    }
+
+    function applyAuthoritativeMovePayload(payload) {
+      state.pits = clonePitCounts(payload.pits);
+      state.stores = cloneStoreCounts(payload.stores);
+      state.currentPlayer = payload.currentPlayer;
+      state.gameOver = payload.gameOver;
+    }
+
+    function applyUpdate(payload) {
+      if (!payload || !payload.type) return;
+
+      switch (payload.type) {
+        case 'join': {
+          const { addr, name, colorSeed } = payload;
+          if (state.player1 && state.player1.addr === addr) return;
+          if (state.player2 && state.player2.addr === addr) return;
+          if (!state.player1) {
+            state.player1 = { addr, name };
+            if (colorSeed != null) {
+              state.colorSeed = colorSeed;
+              assignMarbleColors(state.colorSeed);
+            }
+          } else if (!state.player2) {
+            state.player2 = { addr, name };
+          }
+          break;
+        }
+
+        case 'move': {
+          applyAuthoritativeMovePayload(payload);
+          break;
+        }
+
+        case 'newgame': {
+          state = initState();
+          if (payload.colorSeed != null) {
+            state.colorSeed = payload.colorSeed;
+          }
+          assignMarbleColors(state.colorSeed);
+          break;
+        }
+
+        case 'quit': {
+          const quitterAddr = payload.addr;
+          const myAddr = getWebxdcSelfAddr();
+          const wasOpponent = quitterAddr !== myAddr;
+          state = initState();
+          if (payload.colorSeed != null) {
+            state.colorSeed = payload.colorSeed;
+          }
+          assignMarbleColors(state.colorSeed);
+          if (wasOpponent) {
+            pendingQuitDialog = true;
+          }
+          break;
+        }
+      }
+    }
+
+    // =====================================================================
+    // GAME LOGIC - SOWING
+    // =====================================================================
+    function executeMove(playerIdx, pitIdx) {
+      normalizeStateToCounts();
+      return simulateMove({
+        pits: state.pits,
+        stores: state.stores,
+        currentPlayer: state.currentPlayer,
+        gameOver: state.gameOver,
+      }, playerIdx, pitIdx);
+    }
+
+    function clearPitText(pitEl) {
+      Array.from(pitEl.childNodes).forEach(function(node) {
+        if (node.nodeType === Node.TEXT_NODE) node.remove();
+      });
+    }
+
+    function ensureChildContainer(parentEl, selector, className) {
+      let container = parentEl.querySelector(selector);
+      if (!container) {
+        container = document.createElement('div');
+        container.className = className;
+        parentEl.appendChild(container);
+      }
+      return container;
+    }
+
+    function getOwnedMarbles(parentEl) {
+      return Array.from(parentEl.querySelectorAll('.marble'));
+    }
+
+    function layoutPitMarbles(pitEl, marbles, isMirrored) {
+      clearPitText(pitEl);
+      const innerCount = Math.min(marbles.length, PIT_MARBLE_CAPACITY);
+      const positions = computeBowlPositions(innerCount);
+      const container = ensureChildContainer(pitEl, '.marbles', 'marbles');
+      let overflow = pitEl.querySelector('.marbles-overflow');
+      if (marbles.length > PIT_MARBLE_CAPACITY) {
+        overflow = ensureChildContainer(
+          pitEl,
+          '.marbles-overflow',
+          'marbles-overflow overflow-' + (isMirrored ? 'top' : 'bottom')
+        );
+        overflow.className = 'marbles-overflow overflow-' + (isMirrored ? 'top' : 'bottom');
+      } else if (overflow) {
+        overflow.remove();
+        overflow = null;
+      }
+
+      for (let i = 0; i < innerCount; i++) {
+        const marble = marbles[i];
+        let px = positions[i].x;
+        let py = positions[i].y;
+        if (isMirrored) {
+          px = 100 - px;
+          py = 100 - py;
+        }
+        marble.style.left = 'calc(' + px + '% - min(5px, 1vmin))';
+        marble.style.top = 'calc(' + py + '% - min(5px, 1vmin))';
+        container.appendChild(marble);
+      }
+
+      if (overflow) {
+        for (let i = innerCount; i < marbles.length; i++) {
+          const marble = marbles[i];
+          marble.style.left = '';
+          marble.style.top = '';
+          overflow.appendChild(marble);
+        }
+      }
+    }
+
+    function layoutStoreMarbles(storeEl, marbles) {
+      const innerCount = Math.min(marbles.length, STORE_MARBLE_CAPACITY);
+      const positions = computeStorePositions(innerCount);
+      const container = ensureChildContainer(storeEl, '.marbles', 'marbles');
+      let overflowUp = storeEl.querySelector('.overflow-top');
+      let overflowDown = storeEl.querySelector('.overflow-bottom');
+      if (marbles.length > STORE_MARBLE_CAPACITY) {
+        overflowUp = ensureChildContainer(storeEl, '.overflow-top', 'marbles-overflow overflow-top');
+        overflowDown = ensureChildContainer(storeEl, '.overflow-bottom', 'marbles-overflow overflow-bottom');
+      } else {
+        overflowUp?.remove();
+        overflowDown?.remove();
+        overflowUp = null;
+        overflowDown = null;
+      }
+
+      for (let i = 0; i < innerCount; i++) {
+        const marble = marbles[i];
+        marble.style.left = 'calc(' + positions[i].x + '% - min(6px, 1.1vmin))';
+        marble.style.top = 'calc(' + positions[i].y + '% - min(6px, 1.1vmin))';
+        container.appendChild(marble);
+      }
+
+      if (overflowUp && overflowDown) {
+        for (let i = innerCount; i < marbles.length; i++) {
+          const marble = marbles[i];
+          marble.style.left = '';
+          marble.style.top = '';
+          ((i - innerCount) % 2 === 0 ? overflowUp : overflowDown).appendChild(marble);
+        }
+      }
+    }
+
+    function getBoardPerspective(myIdx) {
+      const bottomIdx = hotseatMode ? 1 : (myIdx >= 0 ? myIdx : 0);
+      return { bottomIdx, topIdx: 1 - bottomIdx };
+    }
+
+    function getPitElementForPlayer(playerIdx, pitIdx, myIdx) {
+      const perspective = getBoardPerspective(myIdx);
+      if (playerIdx === perspective.bottomIdx) {
+        return document.querySelectorAll('#bottom-row .pit')[pitIdx] || null;
+      }
+      return document.querySelectorAll('#top-row .pit')[PITS - 1 - pitIdx] || null;
+    }
+
+    function getStoreElementForPlayer(playerIdx, myIdx) {
+      const perspective = getBoardPerspective(myIdx);
+      return playerIdx === perspective.bottomIdx
+        ? document.getElementById('store-bottom')
+        : document.getElementById('store-top');
+    }
+
+    function rebuildMarbleDom(myIdx, placement) {
+      const boardPlacement = placement || getInitialMarblePlacement();
+      const usedLegacyIds = new Map();
+      function getPlacementMarble(id) {
+        const normalizedId = ((Number(id) % TOTAL_MARBLES) + TOTAL_MARBLES) % TOTAL_MARBLES;
+        const seenCount = usedLegacyIds.get(id) || 0;
+        usedLegacyIds.set(id, seenCount + 1);
+        if (seenCount === 0 && normalizedId === Number(id)) return getMarbleNode(normalizedId);
+        const marble = createMarble(normalizedId);
+        marble.dataset.marbleId = String(id) + '-dup-' + seenCount;
+        return marble;
+      }
+      document.querySelectorAll('.board .marble, #board-animation-layer .marble').forEach(function(marble) {
+        marble.remove();
+      });
+      for (let playerIdx = 0; playerIdx < 2; playerIdx++) {
+        for (let pitIdx = 0; pitIdx < PITS; pitIdx++) {
+          const pitEl = getPitElementForPlayer(playerIdx, pitIdx, myIdx);
+          if (!pitEl) continue;
+          const marbles = (boardPlacement.pits[playerIdx][pitIdx] || []).map(getPlacementMarble);
+          layoutPitMarbles(pitEl, marbles, playerIdx !== getBoardPerspective(myIdx).bottomIdx);
+        }
+        const storeEl = getStoreElementForPlayer(playerIdx, myIdx);
+        if (!storeEl) continue;
+        const marbles = (boardPlacement.stores[playerIdx] || []).map(getPlacementMarble);
+        layoutStoreMarbles(storeEl, marbles);
+      }
+      marbleLayoutResetPending = false;
+    }
+
+    function extractLegacyPlacement() {
+      const hasLegacyArrays = state.pits.some(function(row) {
+        return row.some(Array.isArray);
+      }) || state.stores.some(Array.isArray);
+      if (!hasLegacyArrays) return null;
+      return {
+        pits: state.pits.map(function(row) {
+          return row.map(function(value) {
+            return Array.isArray(value) ? [...value] : [];
+          });
+        }),
+        stores: state.stores.map(function(value) {
+          return Array.isArray(value) ? [...value] : [];
+        }),
+      };
+    }
+
+    function movePitDomToPlayerStore(sourcePlayerIdx, pitIdx, targetPlayerIdx, myIdx) {
+      const pitEl = getPitElementForPlayer(sourcePlayerIdx, pitIdx, myIdx);
+      const storeEl = getStoreElementForPlayer(targetPlayerIdx, myIdx);
+      if (!pitEl || !storeEl) return;
+      const marbles = getOwnedMarbles(pitEl);
+      const storeMarbles = getOwnedMarbles(storeEl).concat(marbles);
+      layoutStoreMarbles(storeEl, storeMarbles);
+      layoutPitMarbles(pitEl, [], sourcePlayerIdx !== getBoardPerspective(myIdx).bottomIdx);
+      pitEl.classList.add('empty');
+    }
+
+    function movePitDomToStore(playerIdx, pitIdx, myIdx) {
+      movePitDomToPlayerStore(playerIdx, pitIdx, playerIdx, myIdx);
+    }
+
+    function getTargetElementForMovePos(playerIdx, pos, myIdx) {
+      if (pos >= 0 && pos <= 5) return getPitElementForPlayer(playerIdx, pos, myIdx);
+      if (pos === 6) return getStoreElementForPlayer(playerIdx, myIdx);
+      if (pos >= 7 && pos <= 12) return getPitElementForPlayer(1 - playerIdx, pos - 7, myIdx);
+      return null;
+    }
+
+    function applyInstantMoveToDom(playerIdx, pitIdx, myIdx) {
+      normalizeStateToCounts();
+      const result = executeMove(playerIdx, pitIdx);
+      const sourceEl = getPitElementForPlayer(playerIdx, pitIdx, myIdx);
+      const sourceMarbles = getOwnedMarbles(sourceEl);
+      const movingMarbles = sourceMarbles.slice(0, result.sowPath.length);
+
+      layoutPitMarbles(sourceEl, [], playerIdx !== getBoardPerspective(myIdx).bottomIdx);
+      sourceEl.classList.add('empty');
+
+      result.sowPath.forEach(function(pos, index) {
+        const marble = movingMarbles[index];
+        const targetEl = getTargetElementForMovePos(playerIdx, pos, myIdx);
+        if (!marble || !targetEl) return;
+        if (pos === 6) {
+          layoutStoreMarbles(targetEl, getOwnedMarbles(targetEl).concat(marble));
+        } else {
+          const isMirrored = targetEl.parentElement && targetEl.parentElement.id === 'top-row';
+          layoutPitMarbles(targetEl, getOwnedMarbles(targetEl).concat(marble), isMirrored);
+          targetEl.classList.remove('empty');
+        }
+      });
+
+      if (result.capture) {
+        movePitDomToPlayerStore(playerIdx, result.capture.landingPitIdx, playerIdx, myIdx);
+        movePitDomToPlayerStore(1 - playerIdx, result.capture.oppositePitIdx, playerIdx, myIdx);
+      }
+      if (result.gameOver) {
+        const groupedStoreNodes = [0, 1].map(function(groupPlayerIdx) {
+          return getOwnedMarbles(getStoreElementForPlayer(groupPlayerIdx, myIdx));
+        });
+        for (let collectedPlayerIdx = 0; collectedPlayerIdx < 2; collectedPlayerIdx++) {
+          for (let collectedPitIdx = 0; collectedPitIdx < PITS; collectedPitIdx++) {
+            const pitEl = getPitElementForPlayer(collectedPlayerIdx, collectedPitIdx, myIdx);
+            groupedStoreNodes[collectedPlayerIdx].push(...getOwnedMarbles(pitEl));
+            layoutPitMarbles(
+              pitEl,
+              [],
+              collectedPlayerIdx !== getBoardPerspective(myIdx).bottomIdx
+            );
+            pitEl.classList.add('empty');
+          }
+          layoutStoreMarbles(
+            getStoreElementForPlayer(collectedPlayerIdx, myIdx),
+            groupedStoreNodes[collectedPlayerIdx]
+          );
+        }
+      }
+
+      state.pits = result.pits;
+      state.stores = result.stores;
+      state.currentPlayer = result.currentPlayer;
+      state.gameOver = result.gameOver;
+      return result;
+    }
+
+    // Animated sowing: physically picks up marble divs and drops them one by one.
+    // Returns a promise that resolves when the animation and state updates are done.
+    function executeMoveAnimated(playerIdx, pitIdx, delay) {
+      return new Promise(function(resolve) {
+        normalizeStateToCounts();
+        const opponentIdx = 1 - playerIdx;
+        const totalSeeds = state.pits[playerIdx][pitIdx];
+        if (totalSeeds === 0) { resolve(); return; }
+
+        const myIdx = hotseatMode ? -2 : getMyPlayerIndex();
+        const boardEl = document.querySelector('.board');
+        const animationLayer = document.getElementById('board-animation-layer');
+        const boardScale = parseFloat(boardEl.dataset.boardScale || '1') || 1;
+
+        function getTargetEl(pos) {
+          if (pos >= 0 && pos <= 5) {
+            return getPitElementForPlayer(playerIdx, pos, myIdx);
+          } else if (pos === 6) {
+            return getStoreElementForPlayer(playerIdx, myIdx);
+          } else if (pos >= 7 && pos <= 12) {
+            const oppPitIdx = pos - 7;
+            return getPitElementForPlayer(opponentIdx, oppPitIdx, myIdx);
+          }
+          return null;
+        }
+
+        function getLocalCenter(el) {
+          const offset = getOffsetWithinAncestor(el, boardEl);
+          return { x: offset.left + el.offsetWidth / 2, y: offset.top + el.offsetHeight / 2 };
+        }
+
+        function getLandingPlacement(targetEl, pos) {
+          const isStore = pos === 6;
+          const targetPlayerIdx = isStore
+            ? playerIdx
+            : (targetEl.parentElement && targetEl.parentElement.id === 'top-row'
+              ? getBoardPerspective(myIdx).topIdx
+              : getBoardPerspective(myIdx).bottomIdx);
+          const isMirroredPit = !isStore && targetPlayerIdx !== getBoardPerspective(myIdx).bottomIdx;
+          let host;
+          let left = '';
+          let top = '';
+
+          if (isStore) {
+            const count = state.stores[playerIdx];
+            const innerCount = Math.min(count, STORE_MARBLE_CAPACITY);
+            if (count <= STORE_MARBLE_CAPACITY) {
+              const positions = computeStorePositions(innerCount);
+              const slot = positions[innerCount - 1];
+              host = ensureChildContainer(targetEl, '.marbles', 'marbles');
+              left = 'calc(' + slot.x + '% - min(6px, 1.1vmin))';
+              top = 'calc(' + slot.y + '% - min(6px, 1.1vmin))';
+            } else {
+              const overflowIndex = count - innerCount - 1;
+              const overflowClass = overflowIndex % 2 === 0 ? 'overflow-top' : 'overflow-bottom';
+              host = ensureChildContainer(targetEl, '.' + overflowClass, 'marbles-overflow ' + overflowClass);
+            }
+          } else {
+            const pitDomIndex = Array.prototype.indexOf.call(targetEl.parentElement.children, targetEl);
+            const logicalPitIdx = targetPlayerIdx === getBoardPerspective(myIdx).topIdx ? PITS - 1 - pitDomIndex : pitDomIndex;
+            const count = state.pits[targetPlayerIdx][logicalPitIdx];
+            const innerCount = Math.min(count, PIT_MARBLE_CAPACITY);
+            if (count <= PIT_MARBLE_CAPACITY) {
+              const positions = computeBowlPositions(innerCount);
+              let px = positions[innerCount - 1].x;
+              let py = positions[innerCount - 1].y;
+              if (isMirroredPit) {
+                px = 100 - px;
+                py = 100 - py;
+              }
+              host = ensureChildContainer(targetEl, '.marbles', 'marbles');
+              left = 'calc(' + px + '% - min(5px, 1vmin))';
+              top = 'calc(' + py + '% - min(5px, 1vmin))';
+            } else {
+              const overflowClass = isMirroredPit ? 'overflow-top' : 'overflow-bottom';
+              host = ensureChildContainer(targetEl, '.' + overflowClass, 'marbles-overflow ' + overflowClass);
+            }
+          }
+
+          return { host, left, top };
+        }
+
+        function syncTargetContent(targetEl, pos) {
+          if (pos === 6) {
+            syncStoreMarbles(targetEl, state.stores[playerIdx]);
+            return;
+          }
+
+          const perspective = getBoardPerspective(myIdx);
+          const targetPlayerIdx = targetEl.parentElement && targetEl.parentElement.id === 'top-row'
+            ? perspective.topIdx
+            : perspective.bottomIdx;
+          const pitDomIndex = Array.prototype.indexOf.call(targetEl.parentElement.children, targetEl);
+          const logicalPitIdx = targetPlayerIdx === perspective.topIdx ? PITS - 1 - pitDomIndex : pitDomIndex;
+          const isMirrored = targetPlayerIdx === perspective.topIdx;
+          syncPitMarbles(targetEl, state.pits[targetPlayerIdx][logicalPitIdx], isMirrored);
+          targetEl.classList.toggle('empty', state.pits[targetPlayerIdx][logicalPitIdx] === 0);
+        }
+
+        function measureLandingCenter(targetEl, pos) {
+          return getLocalCenter(targetEl);
+        }
+
+        // Step 1: grab the actual marble divs from the source pit
+        const sourceEl = getPitElementForPlayer(playerIdx, pitIdx, myIdx);
+        const srcCenter = getLocalCenter(sourceEl);
+        const sourceMarbles = getOwnedMarbles(sourceEl);
+        const sourceMarbleRect = sourceMarbles[0]
+          ? sourceMarbles[0].getBoundingClientRect()
+          : { width: Math.min(10, window.innerWidth * 0.02), height: Math.min(10, window.innerWidth * 0.02) };
+        const floatWidth = sourceMarbleRect.width / boardScale;
+        const floatHeight = sourceMarbleRect.height / boardScale;
+        const floatSize = Math.max(floatWidth, floatHeight);
+        const liftDirection = sourceEl.parentElement && sourceEl.parentElement.id === 'top-row' ? -1 : 1;
+        const grabbed = [];
+        for (let i = 0; i < totalSeeds && i < sourceMarbles.length; i++) {
+          grabbed.push(sourceMarbles[i]);
+        }
+
+        // Remove marbles from source pit DOM
+        grabbed.forEach(m => m.remove());
+        state.pits[playerIdx][pitIdx] = 0;
+        layoutPitMarbles(sourceEl, [], playerIdx !== getBoardPerspective(myIdx).bottomIdx);
+        sourceEl.classList.add('empty');
+
+        // Create floating marbles using the grabbed divs
+        const floaters = [];
+        for (let i = 0; i < grabbed.length; i++) {
+          const f = grabbed[i];
+          f.classList.add('marble-float');
+          f.style.position = 'absolute';
+          f.style.zIndex = '9999';
+          f.style.transitionDuration = '0s';
+          f.style.width = floatWidth + 'px';
+          f.style.height = floatHeight + 'px';
+          const stackOffset = (totalSeeds - 1 - i) * (floatSize * 0.35);
+          f.style.left = (srcCenter.x - floatWidth / 2) + 'px';
+          f.style.top = (srcCenter.y - floatHeight / 2 + (liftDirection * stackOffset)) + 'px';
+          f.style.transform = 'scale(0.6)';
+          f.style.opacity = '0.7';
+          animationLayer.appendChild(f);
+          floaters.push(f);
+        }
+
+        // Animate lifting
+        const liftDur = Math.min(delay * 0.6, 250);
+        let liftedCount = 0;
+        function liftNext() {
+          if (liftedCount >= totalSeeds) {
+            setTimeout(startDropping, liftDur + 50);
+            return;
+          }
+          const idx = totalSeeds - 1 - liftedCount;
+          const f = floaters[idx];
+          const stackY = srcCenter.y - floatHeight / 2
+            + (liftDirection * ((liftedCount * floatSize * 0.5) + floatSize));
+          f.style.transitionDuration = liftDur + 'ms';
+          f.style.left = (srcCenter.x - floatWidth / 2) + 'px';
+          f.style.top = stackY + 'px';
+          f.style.transform = 'scale(1.5)';
+          f.style.opacity = '1';
+          liftedCount++;
+          setTimeout(liftNext, Math.max(30, liftDur / totalSeeds));
+        }
+
+        let pos = pitIdx;
+        let seedsLeft = totalSeeds;
+        let lastSide = -1;
+        let lastPitIdx = -1;
+
+        function startDropping() { dropNextSeed(); }
+
+        function dropNextSeed() {
+          if (seedsLeft === 0) { finishAnimation(); return; }
+
+          pos++;
+          if (pos > 13) pos = 0;
+          if (pos === 13) { dropNextSeed(); return; }
+
+          seedsLeft--;
+
+          if (pos >= 0 && pos <= 5) {
+            state.pits[playerIdx][pos]++;
+            lastSide = 0; lastPitIdx = pos;
+          } else if (pos === 6) {
+            state.stores[playerIdx]++;
+            lastSide = 1; lastPitIdx = -1;
+          } else if (pos >= 7 && pos <= 12) {
+            const oppPitIdx = pos - 7;
+            state.pits[opponentIdx][oppPitIdx]++;
+            lastSide = 2; lastPitIdx = oppPitIdx;
+          }
+
+          const droppedIndex = totalSeeds - 1 - seedsLeft;
+          const f = floaters[droppedIndex];
+          const targetEl = getTargetEl(pos);
+          const targetCenter = measureLandingCenter(targetEl, pos);
+
+          const travelDur = Math.max(delay * 0.55, 80);
+          const dropDur = Math.max(delay * 0.35, 60);
+
+          f.style.transitionDuration = travelDur + 'ms';
+          f.style.transitionTimingFunction = 'ease-in-out';
+          f.style.left = (targetCenter.x - floatWidth / 2) + 'px';
+          f.style.top = (targetCenter.y - floatHeight / 2 - floatSize * 1.2) + 'px';
+          f.style.transform = 'scale(1.5)';
+
+          setTimeout(function() {
+            f.style.transitionDuration = dropDur + 'ms';
+            f.style.transitionTimingFunction = 'ease-in';
+            f.style.left = (targetCenter.x - floatWidth / 2) + 'px';
+            f.style.top = (targetCenter.y - floatHeight / 2) + 'px';
+            f.style.transform = 'scale(0.8)';
+            f.style.opacity = '0.6';
+
+            setTimeout(function() {
+              // Reset inline styles so the marble div goes back to CSS-controlled
+              f.classList.remove('marble-float');
+              f.style.position = '';
+              f.style.zIndex = '';
+              f.style.transitionDuration = '';
+              f.style.transitionTimingFunction = '';
+              f.style.left = '';
+              f.style.top = '';
+              f.style.transform = '';
+              f.style.opacity = '';
+              f.style.width = '';
+              f.style.height = '';
+
+              targetEl.appendChild(f);
+              syncTargetContent(targetEl, pos);
+
+              setTimeout(dropNextSeed, Math.max(delay * 0.1, 20));
+            }, dropDur);
+          }, travelDur);
+        }
+
+        function finishAnimation() {
+          floaters.forEach(function(f) {
+            if (f.parentNode === animationLayer) f.remove();
+          });
+
+          let extraTurn = lastSide === 1;
+
+          if (lastSide === 0 && state.pits[playerIdx][lastPitIdx] === 1) {
+            const oppositeIdx = PITS - 1 - lastPitIdx;
+            if (state.pits[opponentIdx][oppositeIdx] > 0) {
+              state.stores[playerIdx] += state.pits[playerIdx][lastPitIdx] + state.pits[opponentIdx][oppositeIdx];
+              state.pits[playerIdx][lastPitIdx] = 0;
+              state.pits[opponentIdx][oppositeIdx] = 0;
+              movePitDomToPlayerStore(playerIdx, lastPitIdx, playerIdx, myIdx);
+              movePitDomToPlayerStore(opponentIdx, oppositeIdx, playerIdx, myIdx);
+            }
+          }
+
+          state.currentPlayer = extraTurn ? playerIdx : opponentIdx;
+
+          const p0empty = state.pits[0].every(function(count) { return count === 0; });
+          const p1empty = state.pits[1].every(function(count) { return count === 0; });
+          if (p0empty || p1empty) {
+            for (let i = 0; i < PITS; i++) {
+              if (state.pits[0][i] > 0) movePitDomToStore(0, i, myIdx);
+              if (state.pits[1][i] > 0) movePitDomToStore(1, i, myIdx);
+              state.stores[0] += state.pits[0][i];
+              state.stores[1] += state.pits[1][i];
+              state.pits[0][i] = 0;
+              state.pits[1][i] = 0;
+            }
+            state.gameOver = true;
+          }
+
+          const renderIdx = hotseatMode ? -2 : getMyPlayerIndex();
+          updateInteractionLockState(renderIdx);
+          renderStatus(renderIdx);
+          renderScoreboard(renderIdx);
+          renderWinner(renderIdx);
+          renderActions(renderIdx);
+
+          // Re-render the board to sync DOM with state, but preserve existing marble divs
+          // by reusing them instead of recreating
+          renderBoard(renderIdx);
+
+          resolve({
+            pits: clonePitCounts(state.pits),
+            stores: cloneStoreCounts(state.stores),
+            currentPlayer: state.currentPlayer,
+            gameOver: state.gameOver,
+          });
+        }
+
+        setTimeout(liftNext, 50);
+      });
+    }
+
+    function startAnimatedRemoteMove(payload) {
+      animating = true;
+      updateInteractionLockState(hotseatMode ? -2 : getMyPlayerIndex());
+      updateMenuButton();
+      const delay = animSpeedToDelay(animSpeed);
+      executeMoveAnimated(payload.playerIndex, payload.pitIndex, delay).then(function() {
+        // Snap to authoritative final state
+        applyAuthoritativeMovePayload(payload);
+        animating = false;
+        processMoveQueue();
+      });
+    }
+
+    function processMoveQueue() {
+      if (animating || menuOpen) return;
+
+      if (pendingMenuMoveQueue.length > 0) {
+        const nextPayload = pendingMenuMoveQueue.shift();
+        if (animSpeed > 0) {
+          startAnimatedRemoteMove(nextPayload);
+        } else {
+          applyInstantMoveToDom(nextPayload.playerIndex, nextPayload.pitIndex, hotseatMode ? -2 : getMyPlayerIndex());
+          applyAuthoritativeMovePayload(nextPayload);
+          render();
+          processMoveQueue();
+        }
+        return;
+      }
+
+      if (pendingMoveQueue.length === 0) {
+        render();
+        return;
+      }
+
+      const nextPayload = pendingMoveQueue.shift();
+      if (animSpeed > 0) {
+        startAnimatedRemoteMove(nextPayload);
+      } else {
+        animating = true;
+        applyInstantMoveToDom(nextPayload.playerIndex, nextPayload.pitIndex, hotseatMode ? -2 : getMyPlayerIndex());
+        applyAuthoritativeMovePayload(nextPayload);
+        animating = false;
+        render();
+        processMoveQueue();
+      }
+    }
+
+    // =====================================================================
+    // WEBXDC NETWORKING
+    // =====================================================================
+    function setupListener() {
+      const runtime = getWebxdcRuntime();
+      if (!runtime) return;
+      runtime.setUpdateListener((update) => {
+        const payload = update.payload;
+        if (payload && payload.type === 'move' && animSpeed > 0 && menuOpen) {
+          pendingMenuMoveQueue.push(payload);
+        } else if (payload && payload.type === 'move' && animSpeed > 0 && !animating) {
+          // Animate the sowing, then apply final state for consistency
+          startAnimatedRemoteMove(payload);
+        } else if (payload && payload.type === 'move' && animSpeed > 0 && animating) {
+          // Already animating - queue this opponent move for later
+          pendingMoveQueue.push(payload);
+        } else if (payload && payload.type === 'move') {
+          applyInstantMoveToDom(payload.playerIndex, payload.pitIndex, hotseatMode ? -2 : getMyPlayerIndex());
+          applyAuthoritativeMovePayload(payload);
+          render();
+        } else {
+          applyUpdate(payload);
+          render();
+        }
+        if (pendingQuitDialog) {
+          pendingQuitDialog = false;
+          showQuitDialog();
+        }
+      }, 0);
+    }
+
+    function tryJoin() {
+      if (!isWebxdcAvailable()) return;
+      const addr = getWebxdcSelfAddr();
+      const name = getWebxdcSelfName();
+
+      // already joined?
+      if (getMyPlayerIndex() !== -1) return;
+      // game full?
+      if (state.player1 && state.player2) return;
+
+      const seatNum = state.player1 ? 2 : 1;
+
+      sendWebxdcUpdate({
+        payload: { type: 'join', addr, name, colorSeed: state.colorSeed },
+        info: name + ' joined as Player ' + seatNum,
+        summary: buildSummary(),
+      }, '');
+    }
+
+    function startHotseat() {
+      closeCpuSetup();
+      resetLocalModeState();
+      hotseatMode = true;
+      localModeType = LOCAL_MODE_TYPES.hotseat;
+      state = initState();
+      state.player1 = { addr: '__hotseat_red__', name: 'Red' };
+      state.player2 = { addr: '__hotseat_green__', name: 'Green' };
+      assignMarbleColors(state.colorSeed);
+      render();
+    }
+
+    function handlePitClick(playerIdx, pitIdx) {
+      if (animating) return;
+      if (state.gameOver) return;
+      if (state.currentPlayer !== playerIdx) return;
+      normalizeStateToCounts();
+      if (state.pits[playerIdx][pitIdx] === 0) return;
+
+      if (hotseatMode) {
+        if (animSpeed > 0) {
+          // Animated sowing — blocks further input until done
+          animating = true;
+          updateInteractionLockState(-2);
+          updateMenuButton();
+          const delay = animSpeedToDelay(animSpeed);
+          executeMoveAnimated(playerIdx, pitIdx, delay).then(function() {
+            animating = false;
+            render();
+          });
+        } else {
+          // Instant move
+          applyInstantMoveToDom(playerIdx, pitIdx, hotseatMode ? -2 : getMyPlayerIndex());
+          render();
+        }
+        return;
+      }
+
+      const myIdx = getMyPlayerIndex();
+      if (myIdx === -1) return;          // spectator
+      if (playerIdx !== myIdx) return;   // not your pits in online mode
+
+      // Online mode: compute result and send it. Animation happens when the
+      // update comes back through the listener (for both sender and receiver).
+      const result = executeMove(playerIdx, pitIdx);
+
+      const p1name = playerName(0);
+      const p2name = playerName(1);
+      let info;
+
+      if (result.gameOver) {
+        if (result.stores[0] > result.stores[1]) {
+          info = 'Game over! ' + p1name + ' wins ' + result.stores[0] + '-' + result.stores[1];
+        } else if (result.stores[1] > result.stores[0]) {
+          info = 'Game over! ' + p2name + ' wins ' + result.stores[1] + '-' + result.stores[0];
+        } else {
+          info = 'Game over! Tie ' + result.stores[0] + '-' + result.stores[1];
+        }
+      }
+
+      // Build summary with updated scores
+      const summaryStores = result.stores;
+      const summary = p1name + ' ' + summaryStores[0] + ' - ' + summaryStores[1] + ' ' + p2name;
+
+      sendWebxdcUpdate({
+        payload: {
+          type: 'move',
+          playerIndex: myIdx,
+          pitIndex: pitIdx,
+          pits: result.pits,
+          stores: result.stores,
+          currentPlayer: result.currentPlayer,
+          gameOver: result.gameOver,
+        },
+        info: info,
+        summary: summary,
+      }, '');
+    }
+
+    function newGame() {
+      if (hotseatMode) {
+        resetLocalModeState();
+        state = initState();
+        assignMarbleColors(state.colorSeed);
+        render();
+        return;
+      }
+      if (!isWebxdcAvailable()) return;
+      const seed = (Math.random() * 0xFFFFFFFF) >>> 0;
+      sendWebxdcUpdate({
+        payload: { type: 'newgame', colorSeed: seed },
+        info: playerName(getMyPlayerIndex()) + ' started a new game',
+        summary: 'New game started',
+      }, '');
+    }
+
+    function buildSummary() {
+      if (!bothJoined()) return 'Waiting for players';
+      return playerName(0) + ' ' + state.stores[0] + ' - ' + state.stores[1] + ' ' + playerName(1);
+    }
+
+    // =====================================================================
+    // RENDERING
+    // =====================================================================
+    function render() {
+      const myIdx = hotseatMode ? -2 : getMyPlayerIndex();  // -2 = hotseat
+      updateAboutLinks();
+
+      if (!bothJoined()) {
+        syncCpuTurnScheduling();
+        renderJoinScreen();
+        return;
+      }
+
+      const gameScreen = document.getElementById('game-screen');
+      if (gameScreen.style.display !== 'block') {
+        suppressBoardTransformTransition = true;
+      }
+
+      // Switch to game screen
+      document.getElementById('join-screen').style.display = 'none';
+      gameScreen.style.display = 'block';
+
+      renderStatus(myIdx);
+      renderScoreboard(myIdx);
+      renderWinner(myIdx);
+      renderActions(myIdx);
+      renderBoard(myIdx);
+      updateMenuButton();
+      syncCpuTurnScheduling();
+    }
+
+    function visibleOuterHeight(el) {
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none') return 0;
+      const rect = el.getBoundingClientRect();
+      return rect.height
+        + parseFloat(style.marginTop || 0)
+        + parseFloat(style.marginBottom || 0);
+    }
+
+    function getAvailableBoardSpace() {
+      const width = Math.max(120, document.documentElement.clientWidth - BOARD_MARGIN_PX * 2);
+      const statusH = visibleOuterHeight(document.getElementById('status'));
+      const scoreH = visibleOuterHeight(document.getElementById('scoreboard'));
+      const winnerH = visibleOuterHeight(document.getElementById('winner-banner'));
+      const actionsH = visibleOuterHeight(document.getElementById('actions'));
+      const height = Math.max(120,
+        window.innerHeight - BOARD_MARGIN_PX * 2 - statusH - scoreH - winnerH - actionsH);
+      return { width, height };
+    }
+
+    function measureNaturalBoardSize(boardEl) {
+      const clone = boardEl.cloneNode(true);
+      clone.removeAttribute('id');
+      clone.style.position = 'absolute';
+      clone.style.left = '-100000px';
+      clone.style.top = '0';
+      clone.style.transform = 'none';
+      clone.style.transition = 'none';
+      clone.style.visibility = 'hidden';
+      clone.style.pointerEvents = 'none';
+      clone.style.maxWidth = 'none';
+      document.body.appendChild(clone);
+      const size = {
+        width: clone.offsetWidth,
+        height: clone.offsetHeight,
+      };
+      clone.remove();
+      return size;
+    }
+
+    function applyBoardTransform() {
+      const board = document.querySelector('.board');
+      const boardFrame = document.getElementById('board-frame');
+      if (!board || !boardFrame) return;
+      const shouldSuppressTransition = suppressBoardTransformTransition;
+      if (shouldSuppressTransition) {
+        board.style.transition = 'none';
+      }
+      const availableSpace = getAvailableBoardSpace();
+      const naturalSize = measureNaturalBoardSize(board);
+      const horizontalFit = Math.min(
+        availableSpace.width / naturalSize.width,
+        availableSpace.height / naturalSize.height
+      );
+      const verticalFit = Math.min(
+        availableSpace.width / naturalSize.height,
+        availableSpace.height / naturalSize.width
+      );
+      const appliedRotation = boardRotationMode === 'auto'
+        ? (verticalFit > horizontalFit ? 90 : 0)
+        : (parseInt(boardRotationMode, 10) || 0);
+      const rotatedW = appliedRotation % 180 === 0 ? naturalSize.width : naturalSize.height;
+      const rotatedH = appliedRotation % 180 === 0 ? naturalSize.height : naturalSize.width;
+      const fitScale = Math.min(
+        availableSpace.width / rotatedW,
+        availableSpace.height / rotatedH
+      );
+      const appliedScale = Math.max(0.1, fitScale * (boardSizePercent / 100));
+      board.style.transform = 'rotate(' + appliedRotation + 'deg) scale(' + appliedScale + ')';
+      board.style.margin = '';
+      board.dataset.rotationMode = boardRotationMode;
+      board.dataset.rotationAngle = String(appliedRotation);
+      board.dataset.layoutOrientation = 'horizontal';
+      board.dataset.boardScale = appliedScale.toFixed(4);
+      boardFrame.style.width = (rotatedW * appliedScale).toFixed(2) + 'px';
+      boardFrame.style.height = (rotatedH * appliedScale).toFixed(2) + 'px';
+      if (shouldSuppressTransition) {
+        suppressBoardTransformTransition = false;
+        void board.offsetWidth;
+        requestAnimationFrame(function() {
+          if (board.isConnected) board.style.transition = '';
+        });
+      }
+    }
+
+    function renderJoinScreen() {
+      document.getElementById('join-screen').style.display = 'block';
+      document.getElementById('game-screen').style.display = 'none';
+
+      const joinIntro = document.getElementById('join-intro');
+      const slot1 = document.getElementById('slot1');
+      const slot2 = document.getElementById('slot2');
+      const joinBtn = document.getElementById('join-btn');
+      const hotseatBtn = document.getElementById('hotseat-btn');
+      const playerVsCpuBtn = document.getElementById('player-vs-cpu-btn');
+      const cpuVsCpuBtn = document.getElementById('cpu-vs-cpu-btn');
+      const joinStatus = document.getElementById('join-status');
+      const onlineAvailable = isWebxdcAvailable();
+
+      const canStartLocalModes = !state.player1 && !state.player2;
+      if (!onlineAvailable) {
+        joinIntro.textContent = 'Local play only in this browser. Choose a mode to start.';
+        slot1.style.display = 'none';
+        slot2.style.display = 'none';
+        joinBtn.style.display = 'none';
+        joinStatus.textContent = '';
+      } else {
+        joinIntro.textContent = 'A 2-player game. Join a seat to play!';
+        slot1.style.display = '';
+        slot2.style.display = '';
+
+        if (state.player1) {
+          slot1.textContent = 'Player 1: ' + state.player1.name;
+          slot1.className = 'slot taken';
+        } else {
+          slot1.textContent = 'Player 1: waiting...';
+          slot1.className = 'slot open';
+        }
+
+        if (state.player2) {
+          slot2.textContent = 'Player 2: ' + state.player2.name;
+          slot2.className = 'slot taken';
+        } else {
+          slot2.textContent = 'Player 2: waiting...';
+          slot2.className = 'slot open';
+        }
+
+        const myIdx = getMyPlayerIndex();
+        if (myIdx !== -1) {
+          joinBtn.style.display = 'none';
+          joinStatus.textContent = 'You joined as Player ' + (myIdx + 1) + '. Waiting for opponent...';
+        } else if (state.player1 && state.player2) {
+          joinBtn.style.display = 'none';
+          joinStatus.textContent = 'Game is full. You are spectating.';
+        } else {
+          joinBtn.style.display = '';
+          joinStatus.textContent = '';
+        }
+      }
+
+      if (!onlineAvailable) {
+        slot1.className = 'slot open';
+        slot2.className = 'slot open';
+      } else if (!state.player1 && !state.player2) {
+        // Preserve the empty-seat visual state when returning from local modes.
+        slot1.className = 'slot open';
+        slot2.className = 'slot open';
+      }
+
+      hotseatBtn.style.display = canStartLocalModes ? '' : 'none';
+      playerVsCpuBtn.style.display = canStartLocalModes ? '' : 'none';
+      cpuVsCpuBtn.style.display = canStartLocalModes ? '' : 'none';
+
+      updateMenuButton();
+      renderCpuSetup();
+    }
+
+    function renderBoard(myIdx) {
+      const legacyPlacement = extractLegacyPlacement();
+      normalizeStateToCounts();
+      const bottomIdx = hotseatMode ? 1 : (myIdx >= 0 ? myIdx : 0);
+      const topIdx = 1 - bottomIdx;
+
+      const topRow = document.getElementById('top-row');
+      const bottomRow = document.getElementById('bottom-row');
+
+      while (topRow.children.length < 6) {
+        const pit = document.createElement('div');
+        pit.className = 'pit';
+        topRow.appendChild(pit);
+      }
+      while (topRow.children.length > 6) topRow.removeChild(topRow.lastChild);
+      while (bottomRow.children.length < 6) {
+        const pit = document.createElement('div');
+        pit.className = 'pit';
+        bottomRow.appendChild(pit);
+      }
+      while (bottomRow.children.length > 6) bottomRow.removeChild(bottomRow.lastChild);
+
+      // Sync a row of pits with state, reusing existing elements and marble divs
+      function syncRow(row, playerIdx, pitClass, isReversed) {
+        for (let j = 0; j < 6; j++) {
+          const pitIdx = isReversed ? 5 - j : j;
+          const pit = row.children[j];
+          const pitCount = state.pits[playerIdx][pitIdx];
+
+          pit.className = 'pit ' + pitClass;
+          if (pitCount === 0) pit.classList.add('empty');
+
+          // Sync marble divs in this pit (only in marble mode)
+          if (displayMode === 'marbles') {
+            syncPitMarbles(pit, pitCount, isReversed);
+            pit.querySelectorAll('.marbles, .marbles-overflow').forEach(function(el) { el.style.display = ''; });
+          } else {
+            // Numbers mode: show text content
+            clearPitText(pit);
+            pit.insertBefore(document.createTextNode(String(pitCount)), pit.firstChild || null);
+            pit.querySelectorAll('.marbles, .marbles-overflow').forEach(function(el) { el.style.display = 'none'; });
+          }
+
+          pit.onclick = null;
+        }
+      }
+
+      if (displayMode === 'marbles' && (marbleLayoutResetPending || legacyPlacement || document.querySelectorAll('.board .marble').length === 0)) {
+        rebuildMarbleDom(myIdx, legacyPlacement || getInitialMarblePlacement());
+      }
+
+      syncRow(topRow, topIdx, 'theirs', true);
+      syncRow(bottomRow, bottomIdx, 'mine', false);
+
+      // Stores
+      const storeTop = document.getElementById('store-top');
+      const storeBottom = document.getElementById('store-bottom');
+
+      const storeTopVal = document.getElementById('store-top-val');
+      const storeBottomVal = document.getElementById('store-bottom-val');
+
+      if (displayMode === 'marbles') {
+        storeTopVal.style.display = 'none';
+        storeBottomVal.style.display = 'none';
+        syncStoreMarbles(storeTop, state.stores[topIdx]);
+        syncStoreMarbles(storeBottom, state.stores[bottomIdx]);
+        storeTop.querySelectorAll('.marbles, .marbles-overflow').forEach(function(el) { el.style.display = ''; });
+        storeBottom.querySelectorAll('.marbles, .marbles-overflow').forEach(function(el) { el.style.display = ''; });
+      } else {
+        storeTopVal.style.display = '';
+        storeBottomVal.style.display = '';
+        storeTopVal.textContent = state.stores[topIdx];
+        storeBottomVal.textContent = state.stores[bottomIdx];
+        storeTop.querySelectorAll('.marbles, .marbles-overflow').forEach(function(el) { el.style.display = 'none'; });
+        storeBottom.querySelectorAll('.marbles, .marbles-overflow').forEach(function(el) { el.style.display = 'none'; });
+      }
+
+      storeTop.className = 'store theirs';
+      storeBottom.className = 'store mine';
+
+      storeTop.onclick = function() { if (!longPressTriggered) toggleDisplayMode(); };
+      storeBottom.onclick = function() { if (!longPressTriggered) toggleDisplayMode(); };
+      updateInteractionLockState(myIdx);
+      applyBoardTransform();
+    }
+
+    function canClickPit(playerIdx, pitIdx, myIdx) {
+      if (animating || state.gameOver || state.pits[playerIdx][pitIdx] === 0) return false;
+      if (hotseatMode) {
+        if (isLocalCpuMode() && isAutomatedLocalPlayer(state.currentPlayer)) return false;
+        return state.currentPlayer === playerIdx;
+      }
+      if (myIdx >= 0) return playerIdx === myIdx && state.currentPlayer === myIdx;
+      return false;
+    }
+
+    function updateInteractionLockState(myIdx) {
+      const board = document.querySelector('.board');
+      if (board) board.classList.toggle('input-locked', animating);
+
+      const perspective = getBoardPerspective(myIdx);
+      document.querySelectorAll('#top-row .pit').forEach(function(pit, domIdx) {
+        const pitIdx = PITS - 1 - domIdx;
+        const isClickable = canClickPit(perspective.topIdx, pitIdx, myIdx);
+        pit.classList.remove('clickable', 'disabled', 'locked');
+        if (animating) pit.classList.add('locked');
+        if (isClickable) {
+          pit.classList.add('clickable');
+          pit.onclick = () => handlePitClick(perspective.topIdx, pitIdx);
+        } else {
+          pit.classList.add('disabled');
+          pit.onclick = null;
+        }
+      });
+      document.querySelectorAll('#bottom-row .pit').forEach(function(pit, domIdx) {
+        const pitIdx = domIdx;
+        const isClickable = canClickPit(perspective.bottomIdx, pitIdx, myIdx);
+        pit.classList.remove('clickable', 'disabled', 'locked');
+        if (animating) pit.classList.add('locked');
+        if (isClickable) {
+          pit.classList.add('clickable');
+          pit.onclick = () => handlePitClick(perspective.bottomIdx, pitIdx);
+        } else {
+          pit.classList.add('disabled');
+          pit.onclick = null;
+        }
+      });
+
+      const storeTop = document.getElementById('store-top');
+      const storeBottom = document.getElementById('store-bottom');
+      if (storeTop) storeTop.classList.toggle('locked', animating);
+      if (storeBottom) storeBottom.classList.toggle('locked', animating);
+    }
+
+    // Sync marble divs in a pit element to match the given marble IDs.
+    // Accepts either an array of marble IDs or a simple count (number).
+    function syncPitMarbles(pitEl, marbleIds, isMirrored) {
+      const marbles = Array.isArray(marbleIds)
+        ? marbleIds.map(getMarbleNode)
+        : getOwnedMarbles(pitEl);
+      layoutPitMarbles(pitEl, marbles, isMirrored);
+    }
+
+    // Sync marble divs in a store element to match the given marble IDs.
+    // Accepts either an array of marble IDs or a simple count (number).
+    function syncStoreMarbles(storeEl, marbleIds) {
+      const marbles = Array.isArray(marbleIds)
+        ? marbleIds.map(getMarbleNode)
+        : getOwnedMarbles(storeEl);
+      layoutStoreMarbles(storeEl, marbles);
+    }
+
+    function renderStatus(myIdx) {
+      const el = document.getElementById('status');
+
+      if (state.gameOver) {
+        el.textContent = 'Game Over!';
+        el.className = 'status game-over';
+        el.style.display = showHud ? '' : 'none';
+        return;
+      }
+
+      if (hotseatMode) {
+        if (localModeType === LOCAL_MODE_TYPES.playerVsCpu) {
+          if (state.currentPlayer === 1) {
+            el.textContent = 'Your turn!';
+            el.className = 'status your-turn';
+          } else {
+            el.textContent = 'Waiting for ' + playerName(state.currentPlayer) + '...';
+            el.className = 'status waiting';
+          }
+          el.style.display = showHud ? '' : 'none';
+          return;
+        }
+        const name = playerName(state.currentPlayer);
+        const color = state.currentPlayer === 0 ? '#ef5350' : '#66bb6a';
+        el.innerHTML = '<span style="color:' + color + ';font-weight:600;">' + name + "'s turn</span>";
+        el.className = 'status';
+        el.style.display = showHud ? '' : 'none';
+        return;
+      }
+
+      if (myIdx === -1) {
+        el.textContent = playerName(state.currentPlayer) + "'s turn (spectating)";
+        el.className = 'status spectating';
+      } else if (state.currentPlayer === myIdx) {
+        el.textContent = 'Your turn!';
+        el.className = 'status your-turn';
+      } else {
+        el.textContent = 'Waiting for ' + playerName(state.currentPlayer) + '...';
+        el.className = 'status waiting';
+      }
+      el.style.display = showHud ? '' : 'none';
+    }
+
+    function renderScoreboard(myIdx) {
+      // Hotseat: left = Red (player 0, top/left store), right = Green (player 1, bottom/right store)
+      // Online: left = opponent (top store), right = you (bottom store)
+      const bottomIdx = hotseatMode ? 1 : (myIdx >= 0 ? myIdx : 0);
+      const topIdx = 1 - bottomIdx;
+      const scoreboardEl = document.getElementById('scoreboard');
+
+      document.getElementById('score-left-name').textContent = playerName(topIdx);
+      document.getElementById('score-left-val').textContent = state.stores[topIdx];
+      document.getElementById('score-right-name').textContent = playerName(bottomIdx);
+      document.getElementById('score-right-val').textContent = state.stores[bottomIdx];
+
+      // Highlight active player
+      const leftEl = document.getElementById('score-left');
+      const rightEl = document.getElementById('score-right');
+      leftEl.className = 'player-score' + (state.currentPlayer === topIdx && !state.gameOver ? ' active' : '');
+      rightEl.className = 'player-score' + (state.currentPlayer === bottomIdx && !state.gameOver ? ' active' : '');
+      scoreboardEl.style.display = showHud ? 'flex' : 'none';
+    }
+
+    function renderWinner(myIdx) {
+      const el = document.getElementById('winner-banner');
+      if (!state.gameOver) {
+        el.textContent = '';
+        el.style.display = 'none';
+        return;
+      }
+
+      el.style.display = '';
+      const finalScore = ' ' + state.stores[0] + '-' + state.stores[1];
+
+      if (state.stores[0] > state.stores[1]) {
+        let winnerText;
+        if (localModeType === LOCAL_MODE_TYPES.playerVsCpu) {
+          winnerText = isHumanLocalPlayer(0) ? 'You Win!' : playerName(0) + ' Wins!';
+        } else {
+          winnerText = (hotseatMode || myIdx < 0) ? playerName(0) + ' Wins!' : (myIdx === 0 ? 'You Win!' : playerName(0) + ' Wins!');
+        }
+        el.textContent = winnerText + finalScore;
+      } else if (state.stores[1] > state.stores[0]) {
+        let winnerText;
+        if (localModeType === LOCAL_MODE_TYPES.playerVsCpu) {
+          winnerText = isHumanLocalPlayer(1) ? 'You Win!' : playerName(1) + ' Wins!';
+        } else {
+          winnerText = (hotseatMode || myIdx < 0) ? playerName(1) + ' Wins!' : (myIdx === 1 ? 'You Win!' : playerName(1) + ' Wins!');
+        }
+        el.textContent = winnerText + finalScore;
+      } else {
+        el.textContent = "It's a Tie!" + finalScore;
+      }
+    }
+
+    function renderActions(myIdx) {
+      const el = document.getElementById('actions');
+      el.innerHTML = '';
+
+      if (state.gameOver && (hotseatMode || myIdx >= 0)) {
+        el.style.display = '';
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-secondary';
+        btn.textContent = 'New Game';
+        btn.onclick = newGame;
+        el.appendChild(btn);
+      } else {
+        el.style.display = 'none';
+      }
+    }
+
+    // =====================================================================
+    // GAME MENU (long-press or right-click on stores)
+    // =====================================================================
+    let menuOpen = false;
+    let menuView = 'main';
+    let menuSubviewReturnTarget = 'menu';
+    let longPressTimer = null;
+    let longPressTriggered = false;
+    let pendingQuitDialog = false;
+    const LONG_PRESS_MS = 500;
+
+    function toggleMenuButton() {
+      if (!menuOpen) openMenu();
+      else if (menuView !== 'main') {
+        if (menuSubviewReturnTarget === 'close') closeMenu();
+        else showMainMenu();
+      }
+      else closeMenu();
+    }
+
+    function openMenu() {
+      if (animating) return;
+      menuOpen = true;
+      menuView = 'main';
+      menuSubviewReturnTarget = 'menu';
+      updateMenuLabels();
+      updateMenuView();
+      document.getElementById('game-menu').classList.add('open');
+      updateMenuButton();
+    }
+
+    function closeMenu() {
+      menuOpen = false;
+      menuView = 'main';
+      menuSubviewReturnTarget = 'menu';
+      document.getElementById('game-menu').classList.remove('open');
+      updateMenuView();
+      updateMenuButton();
+      processMoveQueue();
+    }
+
+    function updateMenuLabels() {
+      const toggleBtn = document.getElementById('menu-toggle-display');
+      const toggleHudBtn = document.getElementById('menu-toggle-hud');
+      const toggleMenuBtn = document.getElementById('menu-toggle-menu-button');
+      const rotateBtn = document.getElementById('menu-rotate');
+      const boardSizeSlider = document.getElementById('menu-board-size');
+      const quitBtn = document.getElementById('menu-quit');
+      toggleBtn.textContent = displayMode === 'marbles' ? 'Switch to Numbers' : 'Switch to Marbles';
+      toggleHudBtn.textContent = showHud ? 'Hide Turn Info and Scores' : 'Show Turn Info and Scores';
+      toggleMenuBtn.textContent = (showMenuButton ? 'Hide' : 'Show') + ' Gear Button';
+      rotateBtn.textContent = boardRotationMode === 'auto'
+        ? 'Rotation: Auto'
+        : 'Rotation: ' + boardRotationMode + '\u00b0';
+      boardSizeSlider.value = boardSizePercent;
+      updateBoardSizeStatus(boardSizePercent);
+      const slider = document.getElementById('menu-anim-speed');
+      slider.value = displayMode === 'numbers' ? '0' : String(preferredAnimSpeed);
+      slider.disabled = displayMode === 'numbers';
+      updateAnimStatus(animSpeed);
+      quitBtn.style.display = bothJoined() ? '' : 'none';
+    }
+
+    function updateMenuView() {
+      const mainSheet = document.getElementById('menu-main-sheet');
+      const howtoSheet = document.getElementById('menu-howto-sheet');
+      const aboutSheet = document.getElementById('menu-about-sheet');
+      if (!mainSheet || !howtoSheet || !aboutSheet) return;
+      mainSheet.classList.toggle('hidden', menuView !== 'main');
+      howtoSheet.classList.toggle('hidden', menuView !== 'howto');
+      aboutSheet.classList.toggle('hidden', menuView !== 'about');
+      const menu = document.getElementById('game-menu');
+      if (menuOpen && menu) menu.scrollTop = 0;
+    }
+
+    function updateMenuButton() {
+      const button = document.getElementById('menu-open-btn');
+      if (!button) return;
+      const gameVisible = document.getElementById('game-screen').style.display === 'block';
+      const shouldShow = menuOpen || !gameVisible || (bothJoined() && showMenuButton);
+      const subviewName = menuView === 'about' ? 'about' : 'how to play';
+      const closeLabel = menuView !== 'main'
+        ? (menuSubviewReturnTarget === 'close' ? 'Close ' + subviewName : 'Back to menu')
+        : 'Close menu';
+      button.style.display = shouldShow ? '' : 'none';
+      button.disabled = animating && !menuOpen;
+      button.textContent = menuOpen ? '✕' : '⚙';
+      button.setAttribute('aria-label', !menuOpen ? 'Open menu' : closeLabel);
+      button.title = !menuOpen ? 'Open menu' : closeLabel;
+      button.style.zIndex = menuOpen ? '110' : '70';
+      button.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
+    }
+
+    function animSpeedToDelay(speed) {
+      // Map slider 1-100 to delay in ms: 1 = slow (2000ms), 100 = fast (50ms)
+      return Math.round(2000 - (speed - 1) * (1950 / 99));
+    }
+
+    function updateAnimStatus(val) {
+      const status = document.getElementById('menu-anim-status');
+      if (displayMode === 'numbers') {
+        status.textContent = 'Not available in Numbers mode';
+      } else if (val == 0) {
+        status.textContent = 'Off';
+      } else {
+        const delay = animSpeedToDelay(val);
+        status.textContent = delay + 'ms per seed';
+      }
+    }
+
+    function updateBoardSizeStatus(val) {
+      const status = document.getElementById('menu-board-size-status');
+      status.textContent = val + '% of fit';
+    }
+
+    function menuAnimSpeedChanged(val) {
+      preferredAnimSpeed = normalizeAnimSpeed(val);
+      localStorage.setItem(LOCAL_SETTINGS_KEYS.animSpeed, preferredAnimSpeed);
+      if (displayMode !== 'numbers') {
+        animSpeed = preferredAnimSpeed;
+      }
+      updateAnimStatus(animSpeed);
+    }
+
+    function menuToggleDisplay() {
+      if (!toggleDisplayMode()) return;
+      updateMenuLabels();
+    }
+
+    function menuToggleHud() {
+      showHud = !showHud;
+      localStorage.setItem(LOCAL_SETTINGS_KEYS.showHud, showHud ? 'true' : 'false');
+      render();
+      updateMenuLabels();
+    }
+
+    function menuToggleMenuButton() {
+      showMenuButton = !showMenuButton;
+      localStorage.setItem(LOCAL_SETTINGS_KEYS.showMenuButton, showMenuButton ? 'true' : 'false');
+      updateMenuButton();
+      updateMenuLabels();
+    }
+
+    function showHowToPlay(returnTarget) {
+      menuSubviewReturnTarget = returnTarget || 'menu';
+      menuView = 'howto';
+      updateMenuView();
+      updateMenuButton();
+    }
+
+    function openHowToPlay() {
+      if (!menuOpen) openMenu();
+      showHowToPlay('close');
+    }
+
+    function showMainMenu() {
+      menuSubviewReturnTarget = 'menu';
+      menuView = 'main';
+      updateMenuView();
+      updateMenuButton();
+    }
+
+    function showAbout() {
+      menuSubviewReturnTarget = 'menu';
+      menuView = 'about';
+      updateMenuView();
+      updateMenuButton();
+    }
+
+    function menuRotateBoard() {
+      const idx = BOARD_ROTATION_OPTIONS.indexOf(boardRotationMode);
+      boardRotationMode = BOARD_ROTATION_OPTIONS[(idx + 1) % BOARD_ROTATION_OPTIONS.length];
+      localStorage.setItem(LOCAL_SETTINGS_KEYS.boardRotation, boardRotationMode);
+      if (animating) applyBoardTransform();
+      else render();
+      updateMenuLabels();
+    }
+
+    function menuBoardSizeChanged(val) {
+      boardSizePercent = normalizeBoardSizePercent(val);
+      localStorage.setItem(LOCAL_SETTINGS_KEYS.boardSizePercent, boardSizePercent);
+      if (animating) applyBoardTransform();
+      else render();
+      updateBoardSizeStatus(boardSizePercent);
+    }
+
+    function menuQuit() {
+      if (!bothJoined()) {
+        closeMenu();
+        return;
+      }
+      if (!confirm('Are you sure you want to quit the game?')) return;
+      closeMenu();
+      if (hotseatMode) {
+        resetLocalModeState();
+        state = initState();
+        assignMarbleColors(state.colorSeed);
+        render();
+      } else {
+        if (!isWebxdcAvailable()) return;
+        const seed = (Math.random() * 0xFFFFFFFF) >>> 0;
+        sendWebxdcUpdate({
+          payload: { type: 'quit', addr: getWebxdcSelfAddr(), colorSeed: seed },
+          info: playerName(getMyPlayerIndex()) + ' quit the game',
+          summary: 'Game ended',
+        }, '');
+      }
+    }
+
+    function showQuitDialog() {
+      document.getElementById('quit-dialog').classList.add('open');
+    }
+
+    function dismissQuitDialog() {
+      document.getElementById('quit-dialog').classList.remove('open');
+      render();
+    }
+
+    function setupStoreMenuEvents(storeEl) {
+      // Long-press (touch)
+      storeEl.addEventListener('touchstart', function(e) {
+        longPressTriggered = false;
+        longPressTimer = setTimeout(function() {
+          longPressTriggered = true;
+          openMenu();
+        }, LONG_PRESS_MS);
+      }, { passive: true });
+
+      storeEl.addEventListener('touchend', function(e) {
+        clearTimeout(longPressTimer);
+        if (longPressTriggered) {
+          e.preventDefault(); // prevent click from firing after long-press
+        }
+      });
+
+      storeEl.addEventListener('touchmove', function() {
+        clearTimeout(longPressTimer);
+      }, { passive: true });
+
+      storeEl.addEventListener('touchcancel', function() {
+        clearTimeout(longPressTimer);
+      }, { passive: true });
+
+      // Long-press (mouse) — mousedown/mouseup
+      storeEl.addEventListener('mousedown', function(e) {
+        if (e.button !== 0) return; // only left button
+        longPressTriggered = false;
+        longPressTimer = setTimeout(function() {
+          longPressTriggered = true;
+          openMenu();
+        }, LONG_PRESS_MS);
+      });
+
+      storeEl.addEventListener('mouseup', function() {
+        clearTimeout(longPressTimer);
+      });
+
+      storeEl.addEventListener('mouseleave', function() {
+        clearTimeout(longPressTimer);
+      });
+
+      // Right-click
+      storeEl.addEventListener('contextmenu', function(e) {
+        e.preventDefault();
+        openMenu();
+      });
+    }
+
+    // =====================================================================
+    // INIT
+    // =====================================================================
+    setupListener();
+    initPlainWebPwa();
+    render();
+    let lastViewportKey = '';
+    function relayoutForViewportChange() {
+      const vv = window.visualViewport;
+      const viewportW = vv ? Math.round(vv.width) : document.documentElement.clientWidth;
+      const viewportH = vv ? Math.round(vv.height) : window.innerHeight;
+      const viewportKey = viewportW + 'x' + viewportH;
+      if (viewportKey === lastViewportKey) return;
+      lastViewportKey = viewportKey;
+      if (animating) applyBoardTransform();
+      else render();
+      if (menuOpen) updateMenuLabels();
+    }
+    if (window.ResizeObserver) {
+      const viewportObserver = new ResizeObserver(relayoutForViewportChange);
+      viewportObserver.observe(document.documentElement);
+    }
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', relayoutForViewportChange);
+    }
+
+    // Attach menu events to stores (after initial render)
+    setupStoreMenuEvents(document.getElementById('store-top'));
+    setupStoreMenuEvents(document.getElementById('store-bottom'));
+  </script>
+</body>
+</html>
