@@ -37,11 +37,11 @@ Start a completely local game on one device with Red on top and Green on bottom.
 
 ### Local: Player vs CPU
 
-Choose a CPU opponent, then choose who goes first. The human always stays on the bottom row.
+Choose a CPU opponent, then choose who goes first. The human always stays on the bottom row. Picking Alice or Ashton opens a solver config screen first so you can tweak that instance before the game starts.
 
 ### Local: CPU vs CPU
 
-Choose a CPU for each side and let them play the full game locally.
+Choose a CPU for each side and let them play the full game locally. Alice and Ashton are configured per instance, so you can pit two differently tuned copies of the same solver against each other in one match.
 
 ### Plain web / PWA
 
@@ -90,6 +90,15 @@ Available local CPU players are declared near the top of `index.html` and are ea
 - **Thomas** — prefers another turn first, then randomly falls back among multiple chooser strategies
 - **Alice** — pure JavaScript lookahead player that searches as deep as possible for up to 1000ms per turn
 - **Ashton** — optional Rust/WASM lookahead player that searches as deep as possible for up to 1000ms per turn; she is only shown when `mancala-solver.wasm` loads successfully
+
+Choosing Alice or Ashton opens a dedicated config screen where you can tune:
+
+- search mode (`time` or `depth`)
+- time budget / fixed depth
+- worker usage and max worker count
+- all evaluation weights
+
+Those settings apply only to that in-game instance, but the chosen values are also saved as the defaults for the next time you pick that solver.
 
 When the environment supports Web Workers and multiple cores, Alice and Ashton split timed root searches across workers. If workers or worker-based wasm loading are unavailable or fail, they automatically fall back to the existing single-threaded search.
 
@@ -170,6 +179,7 @@ The Puppeteer suite covers:
 - full deterministic hotseat playthroughs with animations off and on
 - menu, How to Play, and About flows
 - local CPU setup and autoplay
+- per-instance Alice/Ashton solver configuration and saved defaults
 - duplicate-name labeling
 - plain-web fallback without `webxdc.js`
 - favicon / manifest / service worker PWA behavior

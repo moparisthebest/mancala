@@ -1,10 +1,14 @@
 const PITS: usize = 6;
-const TERMINAL_SCORE_WEIGHT: i32 = 100_000;
-const STORE_SCORE_WEIGHT: i32 = 1_000;
-const PIT_SCORE_WEIGHT: i32 = 25;
-const EXTRA_TURN_WEIGHT: i32 = 40;
-const CAPTURE_WEIGHT: i32 = 10;
-const MOBILITY_WEIGHT: i32 = 5;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SearchConfig {
+    terminal_score_weight: i32,
+    store_score_weight: i32,
+    pit_score_weight: i32,
+    extra_turn_weight: i32,
+    capture_weight: i32,
+    mobility_weight: i32,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Board {
@@ -53,6 +57,24 @@ fn build_board(flat: [u8; 15]) -> Board {
         stores: [flat[12], flat[13]],
         current_player: usize::from(flat[14].min(1)),
         game_over: false,
+    }
+}
+
+fn build_search_config(
+    terminal_score_weight: i32,
+    store_score_weight: i32,
+    pit_score_weight: i32,
+    extra_turn_weight: i32,
+    capture_weight: i32,
+    mobility_weight: i32,
+) -> SearchConfig {
+    SearchConfig {
+        terminal_score_weight,
+        store_score_weight,
+        pit_score_weight,
+        extra_turn_weight,
+        capture_weight,
+        mobility_weight,
     }
 }
 
@@ -197,12 +219,12 @@ fn best_capture(board: &Board, player: usize) -> i32 {
         .unwrap_or(0)
 }
 
-fn evaluate(board: &Board, maximizing_player: usize) -> i32 {
+fn evaluate(board: &Board, maximizing_player: usize, config: &SearchConfig) -> i32 {
     let opponent = 1 - maximizing_player;
     let store_diff = i32::from(board.stores[maximizing_player]) - i32::from(board.stores[opponent]);
 
     if board.game_over {
-        return store_diff * TERMINAL_SCORE_WEIGHT;
+        return store_diff * config.terminal_score_weight;
     }
 
     let pit_diff = sum_side_pits(board, maximizing_player) - sum_side_pits(board, opponent);
@@ -210,17 +232,18 @@ fn evaluate(board: &Board, maximizing_player: usize) -> i32 {
     let extra_turn_diff = count_extra_turn_moves(board, maximizing_player) - count_extra_turn_moves(board, opponent);
     let capture_diff = best_capture(board, maximizing_player) - best_capture(board, opponent);
 
-    store_diff * STORE_SCORE_WEIGHT
-        + pit_diff * PIT_SCORE_WEIGHT
-        + extra_turn_diff * EXTRA_TURN_WEIGHT
-        + capture_diff * CAPTURE_WEIGHT
-        + mobility_diff * MOBILITY_WEIGHT
+    store_diff * config.store_score_weight
+        + pit_diff * config.pit_score_weight
+        + extra_turn_diff * config.extra_turn_weight
+        + capture_diff * config.capture_weight
+        + mobility_diff * config.mobility_weight
 }
 
 fn search(
     board: &Board,
     maximizing_player: usize,
     depth: u32,
+    config: &SearchConfig,
     mut alpha: i32,
     mut beta: i32,
     deadline_ms: Option<f64>,
@@ -228,7 +251,7 @@ fn search(
     if let Some(deadline) = deadline_ms {
         if current_time_ms() >= deadline {
             return SearchResult {
-                score: evaluate(board, maximizing_player),
+                score: evaluate(board, maximizing_player, config),
                 best_move: -1,
                 completed: false,
             };
@@ -237,7 +260,7 @@ fn search(
 
     if depth == 0 || board.game_over {
         return SearchResult {
-            score: evaluate(board, maximizing_player),
+            score: evaluate(board, maximizing_player, config),
             best_move: -1,
             completed: true,
         };
@@ -246,7 +269,7 @@ fn search(
     let moves = ordered_legal_moves(board);
     if moves.is_empty() {
         return SearchResult {
-            score: evaluate(board, maximizing_player),
+            score: evaluate(board, maximizing_player, config),
             best_move: -1,
             completed: true,
         };
@@ -265,6 +288,7 @@ fn search(
             &result.board,
             maximizing_player,
             depth - 1,
+            config,
             alpha,
             beta,
             deadline_ms,
@@ -303,9 +327,18 @@ fn search(
     }
 }
 
-fn choose_move_for_depth(board: Board, max_depth: u32) -> i32 {
+fn choose_move_for_depth(board: Board, max_depth: u32, config: &SearchConfig) -> i32 {
     let depth = max_depth.max(1);
-    search(&board, board.current_player, depth, i32::MIN, i32::MAX, None).best_move
+    search(
+        &board,
+        board.current_player,
+        depth,
+        config,
+        i32::MIN,
+        i32::MAX,
+        None,
+    )
+    .best_move
 }
 
 fn pack_timed_search_result(best_move: i32, completed_depth: u32) -> u64 {
@@ -318,7 +351,7 @@ fn pack_score_search_result(score: i32, completed_depth: u32) -> u64 {
     (u64::from(completed_depth) << 32) | u64::from(score_bits)
 }
 
-fn choose_move_for_time(board: Board, time_budget_ms: u32) -> (u8, u32) {
+fn choose_move_for_time(board: Board, time_budget_ms: u32, config: &SearchConfig) -> (u8, u32) {
     let legal = ordered_legal_moves(&board);
     debug_assert!(!legal.is_empty(), "choose_move_for_time requires at least one legal move");
     if time_budget_ms == 0 {
@@ -331,7 +364,15 @@ fn choose_move_for_time(board: Board, time_budget_ms: u32) -> (u8, u32) {
     let mut last_completed_depth = 0u32;
 
     loop {
-        let result = search(&board, board.current_player, depth, i32::MIN, i32::MAX, Some(deadline));
+        let result = search(
+            &board,
+            board.current_player,
+            depth,
+            config,
+            i32::MIN,
+            i32::MAX,
+            Some(deadline),
+        );
         if !result.completed {
             break;
         }
@@ -364,13 +405,28 @@ pub extern "C" fn mancala_solver_choose_move_for_depth(
     store1: u8,
     current_player: u8,
     max_depth: u32,
+    terminal_score_weight: i32,
+    store_score_weight: i32,
+    pit_score_weight: i32,
+    extra_turn_weight: i32,
+    capture_weight: i32,
+    mobility_weight: i32,
 ) -> i32 {
+    let config = build_search_config(
+        terminal_score_weight,
+        store_score_weight,
+        pit_score_weight,
+        extra_turn_weight,
+        capture_weight,
+        mobility_weight,
+    );
     choose_move_for_depth(
         build_board([
             p0_0, p0_1, p0_2, p0_3, p0_4, p0_5, p1_0, p1_1, p1_2, p1_3, p1_4, p1_5, store0,
             store1, current_player,
         ]),
         max_depth,
+        &config,
     )
 }
 
@@ -392,7 +448,21 @@ pub extern "C" fn mancala_solver_choose_move_for_time(
     store1: u8,
     current_player: u8,
     time_budget_ms: u32,
+    terminal_score_weight: i32,
+    store_score_weight: i32,
+    pit_score_weight: i32,
+    extra_turn_weight: i32,
+    capture_weight: i32,
+    mobility_weight: i32,
 ) -> u64 {
+    let config = build_search_config(
+        terminal_score_weight,
+        store_score_weight,
+        pit_score_weight,
+        extra_turn_weight,
+        capture_weight,
+        mobility_weight,
+    );
     let board = build_board([
         p0_0, p0_1, p0_2, p0_3, p0_4, p0_5, p1_0, p1_1, p1_2, p1_3, p1_4, p1_5, store0,
         store1, current_player,
@@ -400,7 +470,7 @@ pub extern "C" fn mancala_solver_choose_move_for_time(
     if ordered_legal_moves(&board).is_empty() {
         return pack_timed_search_result(-1, 0);
     }
-    let (best_move, completed_depth) = choose_move_for_time(board, time_budget_ms);
+    let (best_move, completed_depth) = choose_move_for_time(board, time_budget_ms, &config);
     pack_timed_search_result(i32::from(best_move), completed_depth)
 }
 
@@ -424,7 +494,21 @@ pub extern "C" fn mancala_solver_search_score_for_time(
     maximizing_player: u8,
     max_depth: u32,
     time_budget_ms: u32,
+    terminal_score_weight: i32,
+    store_score_weight: i32,
+    pit_score_weight: i32,
+    extra_turn_weight: i32,
+    capture_weight: i32,
+    mobility_weight: i32,
 ) -> u64 {
+    let config = build_search_config(
+        terminal_score_weight,
+        store_score_weight,
+        pit_score_weight,
+        extra_turn_weight,
+        capture_weight,
+        mobility_weight,
+    );
     let board = build_board([
         p0_0, p0_1, p0_2, p0_3, p0_4, p0_5, p1_0, p1_1, p1_2, p1_3, p1_4, p1_5, store0,
         store1, current_player,
@@ -435,6 +519,7 @@ pub extern "C" fn mancala_solver_search_score_for_time(
         &board,
         usize::from(maximizing_player.min(1)),
         depth,
+        &config,
         i32::MIN,
         i32::MAX,
         deadline_ms,
@@ -473,13 +558,13 @@ mod tests {
     #[test]
     fn depth_search_prefers_extra_turn() {
         let state = board([[0, 0, 0, 0, 2, 1], [4, 4, 4, 4, 4, 4]], [0, 0], 0);
-        assert_eq!(choose_move_for_depth(state, 4), 5);
+        assert_eq!(choose_move_for_depth(state, 4, &DEFAULT_SEARCH_CONFIG), 5);
     }
 
     #[test]
     fn time_search_returns_legal_move_without_clock() {
         let state = board([[4, 4, 4, 4, 4, 4], [4, 4, 4, 4, 4, 4]], [0, 0], 0);
-        let (choice, completed_depth) = choose_move_for_time(state, 1);
+        let (choice, completed_depth) = choose_move_for_time(state, 1, &DEFAULT_SEARCH_CONFIG);
         assert!((0..PITS as u8).contains(&choice));
         assert!(completed_depth <= u32::MAX);
     }

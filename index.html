@@ -829,6 +829,73 @@
       background: rgba(255,255,255,0.08);
       color: #ecf0f1;
     }
+
+    #cpu-setup-overlay .setup-config-form {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    #cpu-setup-overlay .setup-config-section {
+      background: rgba(255,255,255,0.06);
+      border-radius: 14px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    #cpu-setup-overlay .setup-config-section h3 {
+      font-size: 1rem;
+      margin: 0;
+    }
+
+    #cpu-setup-overlay .setup-helper-text {
+      font-size: 0.88rem;
+      line-height: 1.45;
+      opacity: 0.78;
+    }
+
+    #cpu-setup-overlay .setup-config-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px;
+    }
+
+    #cpu-setup-overlay .setup-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      text-align: left;
+    }
+
+    #cpu-setup-overlay .setup-field label {
+      font-size: 0.88rem;
+      font-weight: 600;
+    }
+
+    #cpu-setup-overlay .setup-input {
+      width: 100%;
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 10px;
+      background: rgba(17, 24, 39, 0.45);
+      color: #ecf0f1;
+      padding: 10px 12px;
+      font: inherit;
+    }
+
+    #cpu-setup-overlay .setup-checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+
+    #cpu-setup-overlay .setup-checkbox-row input {
+      width: 18px;
+      height: 18px;
+    }
   </style>
 </head>
 <body>
@@ -1480,10 +1547,6 @@
       xdcLink.href = href;
     }
 
-    const DEFAULT_RUST_LOOKAHEAD_DEPTH = 42;
-    const DEFAULT_RUST_LOOKAHEAD_CONFIG = Object.freeze({
-      timeBudgetMs: 1000,
-    });
     const LOOKAHEAD_TERMINAL_SCORE_WEIGHT = 100000;
     const LOOKAHEAD_STORE_SCORE_WEIGHT = 1000;
     const LOOKAHEAD_PIT_SCORE_WEIGHT = 25;
@@ -1493,6 +1556,24 @@
     const LOOKAHEAD_MIN_SCORE = -2147483648;
     const LOOKAHEAD_MAX_SCORE = 2147483647;
     const MAX_PARALLEL_LOOKAHEAD_WORKERS = 6;
+    const DEFAULT_LOOKAHEAD_DEPTH = 42;
+    const DEFAULT_LOOKAHEAD_CONFIG = Object.freeze({
+      searchMode: 'time',
+      maxDepth: DEFAULT_LOOKAHEAD_DEPTH,
+      timeBudgetMs: 1000,
+      useParallelWorkers: true,
+      maxWorkers: MAX_PARALLEL_LOOKAHEAD_WORKERS,
+      terminalScoreWeight: LOOKAHEAD_TERMINAL_SCORE_WEIGHT,
+      storeScoreWeight: LOOKAHEAD_STORE_SCORE_WEIGHT,
+      pitScoreWeight: LOOKAHEAD_PIT_SCORE_WEIGHT,
+      extraTurnWeight: LOOKAHEAD_EXTRA_TURN_WEIGHT,
+      captureWeight: LOOKAHEAD_CAPTURE_WEIGHT,
+      mobilityWeight: LOOKAHEAD_MOBILITY_WEIGHT,
+    });
+    const LOOKAHEAD_CONFIG_STORAGE_KEYS = Object.freeze({
+      alice: 'mancala-lookahead-default-alice',
+      'wasm-lookahead': 'mancala-lookahead-default-wasm-lookahead',
+    });
     let wasmPlayersLoadState = 'idle';
     let wasmPlayersLoadError = '';
     let wasmCpuEnginePromise = null;
@@ -1508,22 +1589,76 @@
 
     function normalizeRustLookaheadDepth(maxDepth) {
       const parsed = Number(maxDepth);
-      if (!Number.isFinite(parsed)) return DEFAULT_RUST_LOOKAHEAD_DEPTH;
+      if (!Number.isFinite(parsed)) return DEFAULT_LOOKAHEAD_DEPTH;
       return Math.max(1, Math.min(42, Math.floor(parsed)));
     }
 
     function normalizeRustLookaheadTimeBudget(timeBudgetMs) {
       const parsed = Number(timeBudgetMs);
-      if (!Number.isFinite(parsed)) return DEFAULT_RUST_LOOKAHEAD_CONFIG.timeBudgetMs;
+      if (!Number.isFinite(parsed)) return DEFAULT_LOOKAHEAD_CONFIG.timeBudgetMs;
       return Math.max(0, Math.min(60000, Math.floor(parsed)));
+    }
+
+    function normalizeLookaheadSearchMode(value) {
+      return value === 'depth' ? 'depth' : 'time';
+    }
+
+    function normalizeLookaheadParallelWorkerCount(value) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return DEFAULT_LOOKAHEAD_CONFIG.maxWorkers;
+      return Math.max(1, Math.min(MAX_PARALLEL_LOOKAHEAD_WORKERS, Math.floor(parsed)));
+    }
+
+    function normalizeLookaheadWeight(value, defaultValue) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return defaultValue;
+      return Math.max(-1000000, Math.min(1000000, Math.floor(parsed)));
     }
 
     function normalizeRustLookaheadConfig(config) {
       const raw = config || {};
       return {
-        maxDepth: raw.maxDepth == null ? null : normalizeRustLookaheadDepth(raw.maxDepth),
+        searchMode: normalizeLookaheadSearchMode(raw.searchMode),
+        maxDepth: normalizeRustLookaheadDepth(raw.maxDepth),
         timeBudgetMs: normalizeRustLookaheadTimeBudget(raw.timeBudgetMs),
+        useParallelWorkers: raw.useParallelWorkers == null ? DEFAULT_LOOKAHEAD_CONFIG.useParallelWorkers : !!raw.useParallelWorkers,
+        maxWorkers: normalizeLookaheadParallelWorkerCount(raw.maxWorkers),
+        terminalScoreWeight: normalizeLookaheadWeight(raw.terminalScoreWeight, DEFAULT_LOOKAHEAD_CONFIG.terminalScoreWeight),
+        storeScoreWeight: normalizeLookaheadWeight(raw.storeScoreWeight, DEFAULT_LOOKAHEAD_CONFIG.storeScoreWeight),
+        pitScoreWeight: normalizeLookaheadWeight(raw.pitScoreWeight, DEFAULT_LOOKAHEAD_CONFIG.pitScoreWeight),
+        extraTurnWeight: normalizeLookaheadWeight(raw.extraTurnWeight, DEFAULT_LOOKAHEAD_CONFIG.extraTurnWeight),
+        captureWeight: normalizeLookaheadWeight(raw.captureWeight, DEFAULT_LOOKAHEAD_CONFIG.captureWeight),
+        mobilityWeight: normalizeLookaheadWeight(raw.mobilityWeight, DEFAULT_LOOKAHEAD_CONFIG.mobilityWeight),
       };
+    }
+
+    function encodeLookaheadConfigForSolver(config) {
+      return [
+        config.terminalScoreWeight,
+        config.storeScoreWeight,
+        config.pitScoreWeight,
+        config.extraTurnWeight,
+        config.captureWeight,
+        config.mobilityWeight,
+      ];
+    }
+
+    function getLookaheadDefaultsStorageKey(playerId) {
+      return LOOKAHEAD_CONFIG_STORAGE_KEYS[playerId] || ('mancala-lookahead-default-' + playerId);
+    }
+
+    function loadLookaheadPlayerDefaults(playerId) {
+      const rawValue = localStorage.getItem(getLookaheadDefaultsStorageKey(playerId));
+      if (!rawValue) return normalizeRustLookaheadConfig(DEFAULT_LOOKAHEAD_CONFIG);
+      try {
+        return normalizeRustLookaheadConfig(JSON.parse(rawValue));
+      } catch (err) {
+        return normalizeRustLookaheadConfig(DEFAULT_LOOKAHEAD_CONFIG);
+      }
+    }
+
+    function saveLookaheadPlayerDefaults(playerId, config) {
+      localStorage.setItem(getLookaheadDefaultsStorageKey(playerId), JSON.stringify(normalizeRustLookaheadConfig(config)));
     }
 
     function encodeBoardStateForSolver(boardState, playerIdx) {
@@ -1645,22 +1780,26 @@
       loadWasmCpuEngine().catch(function() {});
     }
 
-    function chooseRustLookaheadMoveForDepth(boardState, playerIdx, maxDepth) {
-      const depth = normalizeRustLookaheadDepth(maxDepth);
+    function chooseRustLookaheadMoveForDepth(boardState, playerIdx, config) {
+      const normalizedConfig = normalizeRustLookaheadConfig(config);
+      const depth = normalizedConfig.maxDepth;
       const args = encodeBoardStateForSolver(boardState, playerIdx);
+      const configArgs = encodeLookaheadConfigForSolver(normalizedConfig);
       const exports = getLoadedWasmCpuEngine();
       const startTime = performance.now();
-      const pitIdx = exports.mancala_solver_choose_move_for_depth.apply(null, args.concat(depth));
+      const pitIdx = exports.mancala_solver_choose_move_for_depth.apply(null, args.concat([depth]).concat(configArgs));
       const elapsedMs = performance.now() - startTime;
       console.log('Rust depth-bound solver depth ' + depth + ' finished in ' + elapsedMs.toFixed(3) + 'ms');
       return validateRustLookaheadMove(boardState, playerIdx, pitIdx);
     }
 
-    function chooseRustLookaheadMoveForTimeSerial(boardState, playerIdx, timeBudgetMs) {
-      const budget = normalizeRustLookaheadTimeBudget(timeBudgetMs);
+    function chooseRustLookaheadMoveForTimeSerial(boardState, playerIdx, config) {
+      const normalizedConfig = normalizeRustLookaheadConfig(config);
+      const budget = normalizedConfig.timeBudgetMs;
       const args = encodeBoardStateForSolver(boardState, playerIdx);
+      const configArgs = encodeLookaheadConfigForSolver(normalizedConfig);
       const exports = getLoadedWasmCpuEngine();
-      const packedResult = exports.mancala_solver_choose_move_for_time.apply(null, args.concat(budget));
+      const packedResult = exports.mancala_solver_choose_move_for_time.apply(null, args.concat([budget]).concat(configArgs));
       const decodedResult = decodeTimedSolverResult(packedResult);
       const pitIdx = decodedResult.pitIdx;
       const completedDepth = decodedResult.completedDepth;
@@ -1671,14 +1810,10 @@
     function createRustLookaheadChooser(config) {
       const normalizedConfig = normalizeRustLookaheadConfig(config);
       return function(boardState, playerIdx) {
-        if (normalizedConfig.timeBudgetMs > 0) {
-          return chooseRustLookaheadMoveForTime(boardState, playerIdx, normalizedConfig.timeBudgetMs);
+        if (normalizedConfig.searchMode === 'time') {
+          return chooseRustLookaheadMoveForTime(boardState, playerIdx, normalizedConfig);
         }
-        return chooseRustLookaheadMoveForDepth(
-          boardState,
-          playerIdx,
-          normalizedConfig.maxDepth == null ? DEFAULT_RUST_LOOKAHEAD_DEPTH : normalizedConfig.maxDepth
-        );
+        return chooseRustLookaheadMoveForDepth(boardState, playerIdx, normalizedConfig);
       };
     }
 
@@ -1834,11 +1969,11 @@
         }, 0);
     }
 
-    function evaluateLookaheadBoard(boardState, maximizingPlayerIdx) {
+    function evaluateLookaheadBoard(boardState, maximizingPlayerIdx, config) {
       const opponentIdx = 1 - maximizingPlayerIdx;
       const storeDiff = boardState.stores[maximizingPlayerIdx] - boardState.stores[opponentIdx];
       if (boardState.gameOver) {
-        return storeDiff * LOOKAHEAD_TERMINAL_SCORE_WEIGHT;
+        return storeDiff * config.terminalScoreWeight;
       }
 
       const pitDiff = sumLookaheadPitCounts(boardState, maximizingPlayerIdx) - sumLookaheadPitCounts(boardState, opponentIdx);
@@ -1846,17 +1981,17 @@
       const extraTurnDiff = countLookaheadExtraTurnMoves(boardState, maximizingPlayerIdx) - countLookaheadExtraTurnMoves(boardState, opponentIdx);
       const captureDiff = getBestLookaheadCapture(boardState, maximizingPlayerIdx) - getBestLookaheadCapture(boardState, opponentIdx);
 
-      return (storeDiff * LOOKAHEAD_STORE_SCORE_WEIGHT)
-        + (pitDiff * LOOKAHEAD_PIT_SCORE_WEIGHT)
-        + (extraTurnDiff * LOOKAHEAD_EXTRA_TURN_WEIGHT)
-        + (captureDiff * LOOKAHEAD_CAPTURE_WEIGHT)
-        + (mobilityDiff * LOOKAHEAD_MOBILITY_WEIGHT);
+      return (storeDiff * config.storeScoreWeight)
+        + (pitDiff * config.pitScoreWeight)
+        + (extraTurnDiff * config.extraTurnWeight)
+        + (captureDiff * config.captureWeight)
+        + (mobilityDiff * config.mobilityWeight);
     }
 
-    function searchJavaScriptLookahead(boardState, maximizingPlayerIdx, depth, alpha, beta, deadlineMs) {
+    function searchJavaScriptLookahead(boardState, maximizingPlayerIdx, depth, config, alpha, beta, deadlineMs) {
       if (deadlineMs != null && performance.now() >= deadlineMs) {
         return {
-          score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx),
+          score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx, config),
           bestMove: -1,
           completed: false,
         };
@@ -1864,7 +1999,7 @@
 
       if (depth === 0 || boardState.gameOver) {
         return {
-          score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx),
+          score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx, config),
           bestMove: -1,
           completed: true,
         };
@@ -1873,7 +2008,7 @@
       const orderedPitIndices = getOrderedLookaheadPitIndices(boardState);
       if (orderedPitIndices.length === 0) {
         return {
-          score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx),
+          score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx, config),
           bestMove: -1,
           completed: true,
         };
@@ -1888,7 +2023,7 @@
         const nextBoardState = simulateMove(boardState, boardState.currentPlayer, pitIdx);
         if (!nextBoardState) continue;
 
-        const childResult = searchJavaScriptLookahead(nextBoardState, maximizingPlayerIdx, depth - 1, alpha, beta, deadlineMs);
+        const childResult = searchJavaScriptLookahead(nextBoardState, maximizingPlayerIdx, depth - 1, config, alpha, beta, deadlineMs);
         if (!childResult.completed) {
           return {
             score: childResult.score,
@@ -1921,8 +2056,9 @@
       };
     }
 
-    function chooseJavaScriptLookaheadMoveForTimeSerial(boardState, playerIdx, timeBudgetMs) {
-      const budget = normalizeRustLookaheadTimeBudget(timeBudgetMs);
+    function chooseJavaScriptLookaheadMoveForTimeSerial(boardState, playerIdx, config) {
+      const normalizedConfig = normalizeRustLookaheadConfig(config);
+      const budget = normalizedConfig.timeBudgetMs;
       if (boardState.currentPlayer !== playerIdx) {
         throw new Error('JavaScript lookahead chooser expected currentPlayer ' + playerIdx + ', got ' + boardState.currentPlayer);
       }
@@ -1940,7 +2076,7 @@
       let lastCompletedDepth = 0;
 
       while (depth < 0xffffffff) {
-        const result = searchJavaScriptLookahead(boardState, playerIdx, depth, LOOKAHEAD_MIN_SCORE, LOOKAHEAD_MAX_SCORE, deadlineMs);
+        const result = searchJavaScriptLookahead(boardState, playerIdx, depth, normalizedConfig, LOOKAHEAD_MIN_SCORE, LOOKAHEAD_MAX_SCORE, deadlineMs);
         if (!result.completed) break;
         bestMove = result.bestMove;
         lastCompletedDepth = depth;
@@ -2052,7 +2188,7 @@
       }
     }
 
-    async function runParallelLookaheadRound(workers, rootMoves, maximizingPlayerIdx, depth, remainingMs) {
+    async function runParallelLookaheadRound(workers, rootMoves, maximizingPlayerIdx, depth, remainingMs, config) {
       const results = new Array(rootMoves.length);
       let nextIndex = 0;
 
@@ -2067,6 +2203,7 @@
             maximizingPlayerIdx: maximizingPlayerIdx,
             depth: depth,
             remainingMs: remainingMs,
+            config: config,
           });
         }
       }));
@@ -2074,21 +2211,22 @@
       return results;
     }
 
-    async function chooseParallelLookaheadMoveForTime(engineKind, boardState, playerIdx, timeBudgetMs, fallbackChooser) {
-      const budget = normalizeRustLookaheadTimeBudget(timeBudgetMs);
+    async     function chooseParallelLookaheadMoveForTime(engineKind, boardState, playerIdx, config, fallbackChooser) {
+      const normalizedConfig = normalizeRustLookaheadConfig(config);
+      const budget = normalizedConfig.timeBudgetMs;
       if (boardState.currentPlayer !== playerIdx) {
         throw new Error(getLookaheadImplementationLabel(engineKind) + ' lookahead chooser expected currentPlayer ' + playerIdx + ', got ' + boardState.currentPlayer);
       }
 
       const orderedPitIndices = getOrderedLookaheadPitIndices(boardState);
       if (orderedPitIndices.length === 0) return -1;
-      if (budget === 0 || !canUseParallelLookaheadWorkers()) {
-        return fallbackChooser(boardState, playerIdx, budget);
+      if (budget === 0 || !normalizedConfig.useParallelWorkers || !canUseParallelLookaheadWorkers()) {
+        return fallbackChooser(boardState, playerIdx, normalizedConfig);
       }
 
-      const workerCount = getParallelLookaheadWorkerCount(orderedPitIndices.length);
+      const workerCount = Math.min(getParallelLookaheadWorkerCount(orderedPitIndices.length), normalizedConfig.maxWorkers);
       if (workerCount < 2) {
-        return fallbackChooser(boardState, playerIdx, budget);
+        return fallbackChooser(boardState, playerIdx, normalizedConfig);
       }
 
       const rootMoves = orderedPitIndices.map(function(pitIdx) {
@@ -2114,7 +2252,7 @@
           const remainingMs = Math.max(0, Math.floor(deadlineMs - performance.now()));
           if (remainingMs <= 0) break;
 
-          const roundResults = await runParallelLookaheadRound(workers, rootMoves, playerIdx, targetDepth - 1, remainingMs);
+          const roundResults = await runParallelLookaheadRound(workers, rootMoves, playerIdx, targetDepth - 1, remainingMs, normalizedConfig);
           if (roundResults.some(function(result) { return !result || result.completedDepth !== (targetDepth - 1); })) {
             break;
           }
@@ -2136,22 +2274,23 @@
         return validateRustLookaheadMove(boardState, playerIdx, bestMove);
       } catch (err) {
         console.warn(getLookaheadImplementationLabel(engineKind) + ' parallel lookahead failed, falling back to single-threaded search:', err);
-        return fallbackChooser(boardState, playerIdx, budget);
+        return fallbackChooser(boardState, playerIdx, normalizedConfig);
       } finally {
         terminateLookaheadWorkers(workers);
       }
     }
 
-    function chooseRustLookaheadMoveForTime(boardState, playerIdx, timeBudgetMs) {
-      return chooseParallelLookaheadMoveForTime('rust', boardState, playerIdx, timeBudgetMs, chooseRustLookaheadMoveForTimeSerial);
+    function chooseRustLookaheadMoveForTime(boardState, playerIdx, config) {
+      return chooseParallelLookaheadMoveForTime('rust', boardState, playerIdx, config, chooseRustLookaheadMoveForTimeSerial);
     }
 
-    function chooseJavaScriptLookaheadMoveForTime(boardState, playerIdx, timeBudgetMs) {
-      return chooseParallelLookaheadMoveForTime('javascript', boardState, playerIdx, timeBudgetMs, chooseJavaScriptLookaheadMoveForTimeSerial);
+    function chooseJavaScriptLookaheadMoveForTime(boardState, playerIdx, config) {
+      return chooseParallelLookaheadMoveForTime('javascript', boardState, playerIdx, config, chooseJavaScriptLookaheadMoveForTimeSerial);
     }
 
-    function chooseJavaScriptLookaheadMoveForDepth(boardState, playerIdx, maxDepth) {
-      const depth = normalizeRustLookaheadDepth(maxDepth);
+    function chooseJavaScriptLookaheadMoveForDepth(boardState, playerIdx, config) {
+      const normalizedConfig = normalizeRustLookaheadConfig(config);
+      const depth = normalizedConfig.maxDepth;
       if (boardState.currentPlayer !== playerIdx) {
         throw new Error('JavaScript lookahead chooser expected currentPlayer ' + playerIdx + ', got ' + boardState.currentPlayer);
       }
@@ -2160,6 +2299,7 @@
         boardState,
         playerIdx,
         Math.max(1, depth),
+        normalizedConfig,
         LOOKAHEAD_MIN_SCORE,
         LOOKAHEAD_MAX_SCORE,
         null
@@ -2172,14 +2312,10 @@
     function createJavaScriptLookaheadChooser(config) {
       const normalizedConfig = normalizeRustLookaheadConfig(config);
       return function(boardState, playerIdx) {
-        if (normalizedConfig.timeBudgetMs > 0) {
-          return chooseJavaScriptLookaheadMoveForTime(boardState, playerIdx, normalizedConfig.timeBudgetMs);
+        if (normalizedConfig.searchMode === 'time') {
+          return chooseJavaScriptLookaheadMoveForTime(boardState, playerIdx, normalizedConfig);
         }
-        return chooseJavaScriptLookaheadMoveForDepth(
-          boardState,
-          playerIdx,
-          normalizedConfig.maxDepth == null ? DEFAULT_RUST_LOOKAHEAD_DEPTH : normalizedConfig.maxDepth
-        );
+        return chooseJavaScriptLookaheadMoveForDepth(boardState, playerIdx, normalizedConfig);
       };
     }
 
@@ -2305,8 +2441,10 @@
       {
         id: 'alice',
         name: 'Alice',
-        description: 'Searches as deep as possible for up to 1000ms each turn using a pure JavaScript solver.',
-        chooseMove: createJavaScriptLookaheadChooser({ timeBudgetMs: 1000 }),
+        engineKind: 'javascript',
+        solverKind: 'lookahead',
+        description: describeLookaheadPlayer('javascript', loadLookaheadPlayerDefaults('alice')),
+        chooseMove: createJavaScriptLookaheadChooser(loadLookaheadPlayerDefaults('alice')),
       },
     ]);
     let AVAILABLE_PLAYERS = BASE_AVAILABLE_PLAYERS.slice();
@@ -2314,8 +2452,10 @@
       Object.freeze({
         id: 'wasm-lookahead',
         name: 'Ashton',
-        description: 'Searches as deep as possible for up to 1000ms each turn using the Rust/WASM solver.',
-        chooseMove: createRustLookaheadChooser(DEFAULT_RUST_LOOKAHEAD_CONFIG),
+        engineKind: 'rust',
+        solverKind: 'lookahead',
+        description: describeLookaheadPlayer('rust', loadLookaheadPlayerDefaults('wasm-lookahead')),
+        chooseMove: createRustLookaheadChooser(loadLookaheadPlayerDefaults('wasm-lookahead')),
       }),
     ]);
     const LOCAL_MODE_TYPES = Object.freeze({
@@ -2329,9 +2469,12 @@
         open: false,
         mode: null,
         step: null,
-        selectedTopPlayerId: null,
-        selectedBottomPlayerId: null,
+        selectedTopPlayer: null,
+        selectedBottomPlayer: null,
         expandedPlayerId: null,
+        configuringPlayerId: null,
+        configuringSlot: null,
+        draftLookaheadConfig: null,
       };
     }
 
@@ -2377,6 +2520,123 @@
       return AVAILABLE_PLAYERS.find(function(player) { return player.id === playerId; }) || null;
     }
 
+    function isConfigurableLookaheadPlayer(player) {
+      return !!(player && player.solverKind === 'lookahead');
+    }
+
+    function describeLookaheadPlayer(engineKind, config) {
+      const normalizedConfig = normalizeRustLookaheadConfig(config);
+      const searchSummary = normalizedConfig.searchMode === 'time'
+        ? ('Searches as deep as possible for up to ' + normalizedConfig.timeBudgetMs + 'ms per turn')
+        : ('Searches to depth ' + normalizedConfig.maxDepth + ' each turn');
+      return searchSummary + ' using the ' + (engineKind === 'rust' ? 'Rust/WASM' : 'pure JavaScript') + ' solver.';
+    }
+
+    function createLookaheadPlayerTemplate(id, name, engineKind) {
+      const defaultConfig = loadLookaheadPlayerDefaults(id);
+      return Object.freeze({
+        id: id,
+        name: name,
+        engineKind: engineKind,
+        solverKind: 'lookahead',
+        defaultConfig: defaultConfig,
+        description: describeLookaheadPlayer(engineKind, defaultConfig),
+        chooseMove: engineKind === 'rust'
+          ? createRustLookaheadChooser(defaultConfig)
+          : createJavaScriptLookaheadChooser(defaultConfig),
+      });
+    }
+
+    function createConfiguredLookaheadPlayer(player, config) {
+      const normalizedConfig = normalizeRustLookaheadConfig(config);
+      return Object.freeze({
+        id: player.id,
+        name: player.name,
+        engineKind: player.engineKind,
+        solverKind: 'lookahead',
+        solverConfig: normalizedConfig,
+        description: describeLookaheadPlayer(player.engineKind, normalizedConfig),
+        chooseMove: player.engineKind === 'rust'
+          ? createRustLookaheadChooser(normalizedConfig)
+          : createJavaScriptLookaheadChooser(normalizedConfig),
+      });
+    }
+
+    function getCpuSetupPlayerForSlot(slot) {
+      return slot === 'bottom' ? cpuSetupState.selectedBottomPlayer : cpuSetupState.selectedTopPlayer;
+    }
+
+    function getCpuSetupSelectionSlot() {
+      if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) return 'top';
+      return cpuSetupState.step === 'pick-player2' ? 'bottom' : 'top';
+    }
+
+    function openCpuSetupLookaheadConfig(player) {
+      const slot = getCpuSetupSelectionSlot();
+      cpuSetupState.step = 'configure-player';
+      cpuSetupState.configuringPlayerId = player.id;
+      cpuSetupState.configuringSlot = slot;
+      cpuSetupState.draftLookaheadConfig = loadLookaheadPlayerDefaults(player.id);
+      cpuSetupState.expandedPlayerId = null;
+      renderCpuSetup();
+    }
+
+    function updateCpuSetupLookaheadConfig(field, value) {
+      if (!cpuSetupState.draftLookaheadConfig) return;
+      cpuSetupState.draftLookaheadConfig = Object.assign({}, cpuSetupState.draftLookaheadConfig, {
+        [field]: value,
+      });
+      renderCpuSetup();
+    }
+
+    function toggleCpuSetupLookaheadBoolean(field, checked) {
+      updateCpuSetupLookaheadConfig(field, !!checked);
+    }
+
+    function applySelectedCpuSetupPlayer(player) {
+      if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) {
+        cpuSetupState.selectedTopPlayer = player;
+        cpuSetupState.step = 'pick-starter';
+        cpuSetupState.expandedPlayerId = null;
+        cpuSetupState.configuringPlayerId = null;
+        cpuSetupState.configuringSlot = null;
+        cpuSetupState.draftLookaheadConfig = null;
+        renderCpuSetup();
+        return;
+      }
+
+      if (cpuSetupState.step === 'pick-player1' || cpuSetupState.configuringSlot === 'top') {
+        cpuSetupState.selectedTopPlayer = player;
+        cpuSetupState.step = 'pick-player2';
+        cpuSetupState.expandedPlayerId = null;
+        cpuSetupState.configuringPlayerId = null;
+        cpuSetupState.configuringSlot = null;
+        cpuSetupState.draftLookaheadConfig = null;
+        renderCpuSetup();
+        return;
+      }
+
+      cpuSetupState.selectedBottomPlayer = player;
+      cpuSetupState.configuringPlayerId = null;
+      cpuSetupState.configuringSlot = null;
+      cpuSetupState.draftLookaheadConfig = null;
+      startLocalModeGame({
+        mode: LOCAL_MODE_TYPES.cpuVsCpu,
+        topPlayer: cpuSetupState.selectedTopPlayer,
+        bottomPlayer: player,
+        startingPlayer: 0,
+      });
+    }
+
+    function confirmCpuSetupLookaheadConfig() {
+      if (!cpuSetupState.configuringPlayerId || !cpuSetupState.draftLookaheadConfig) return;
+      const player = getAvailablePlayerById(cpuSetupState.configuringPlayerId);
+      if (!player || !isConfigurableLookaheadPlayer(player)) return;
+      const normalizedConfig = normalizeRustLookaheadConfig(cpuSetupState.draftLookaheadConfig);
+      saveLookaheadPlayerDefaults(player.id, normalizedConfig);
+      applySelectedCpuSetupPlayer(createConfiguredLookaheadPlayer(player, normalizedConfig));
+    }
+
     function buildCpuStrategyState() {
       normalizeStateToCounts();
       return {
@@ -2389,27 +2649,19 @@
 
     function openPlayerVsCpuSetup() {
       if (state.player1 || state.player2) return;
-      cpuSetupState = {
-        open: true,
-        mode: LOCAL_MODE_TYPES.playerVsCpu,
-        step: 'pick-opponent',
-        selectedTopPlayerId: null,
-        selectedBottomPlayerId: null,
-        expandedPlayerId: null,
-      };
+      cpuSetupState = createDefaultCpuSetupState();
+      cpuSetupState.open = true;
+      cpuSetupState.mode = LOCAL_MODE_TYPES.playerVsCpu;
+      cpuSetupState.step = 'pick-opponent';
       renderCpuSetup();
     }
 
     function openCpuVsCpuSetup() {
       if (state.player1 || state.player2) return;
-      cpuSetupState = {
-        open: true,
-        mode: LOCAL_MODE_TYPES.cpuVsCpu,
-        step: 'pick-player1',
-        selectedTopPlayerId: null,
-        selectedBottomPlayerId: null,
-        expandedPlayerId: null,
-      };
+      cpuSetupState = createDefaultCpuSetupState();
+      cpuSetupState.open = true;
+      cpuSetupState.mode = LOCAL_MODE_TYPES.cpuVsCpu;
+      cpuSetupState.step = 'pick-player1';
       renderCpuSetup();
     }
 
@@ -2420,17 +2672,28 @@
 
     function cpuSetupBack() {
       if (!cpuSetupState.open) return;
+      if (cpuSetupState.step === 'configure-player') {
+        cpuSetupState.step = cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu
+          ? 'pick-opponent'
+          : (cpuSetupState.configuringSlot === 'bottom' ? 'pick-player2' : 'pick-player1');
+        cpuSetupState.configuringPlayerId = null;
+        cpuSetupState.configuringSlot = null;
+        cpuSetupState.draftLookaheadConfig = null;
+        renderCpuSetup();
+        return;
+      }
       if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) {
         if (cpuSetupState.step === 'pick-starter') {
           cpuSetupState.step = 'pick-opponent';
           cpuSetupState.expandedPlayerId = null;
+          cpuSetupState.selectedTopPlayer = null;
           renderCpuSetup();
           return;
         }
       } else if (cpuSetupState.mode === LOCAL_MODE_TYPES.cpuVsCpu) {
         if (cpuSetupState.step === 'pick-player2') {
           cpuSetupState.step = 'pick-player1';
-          cpuSetupState.selectedBottomPlayerId = null;
+          cpuSetupState.selectedBottomPlayer = null;
           cpuSetupState.expandedPlayerId = null;
           renderCpuSetup();
           return;
@@ -2446,8 +2709,8 @@
     }
 
     function startLocalModeGame(config) {
-      const topPlayer = getAvailablePlayerById(config.topPlayerId);
-      const bottomPlayer = config.bottomPlayerId ? getAvailablePlayerById(config.bottomPlayerId) : null;
+      const topPlayer = config.topPlayer || null;
+      const bottomPlayer = config.bottomPlayer || null;
       if (!topPlayer) throw new Error('Missing top local player: ' + config.topPlayerId);
       if (config.mode === LOCAL_MODE_TYPES.cpuVsCpu && !bottomPlayer) {
         throw new Error('Missing bottom local CPU player: ' + config.bottomPlayerId);
@@ -2477,44 +2740,30 @@
 
     function selectCpuSetupPlayer(playerId) {
       if (!cpuSetupState.open) return;
-      if (!getAvailablePlayerById(playerId)) return;
-
-      if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) {
-        cpuSetupState.selectedTopPlayerId = playerId;
-        cpuSetupState.step = 'pick-starter';
-        cpuSetupState.expandedPlayerId = null;
-        renderCpuSetup();
+      const player = getAvailablePlayerById(playerId);
+      if (!player) return;
+      if (isConfigurableLookaheadPlayer(player)) {
+        openCpuSetupLookaheadConfig(player);
         return;
       }
-
-      if (cpuSetupState.step === 'pick-player1') {
-        cpuSetupState.selectedTopPlayerId = playerId;
-        cpuSetupState.step = 'pick-player2';
-        cpuSetupState.expandedPlayerId = null;
-        renderCpuSetup();
-        return;
-      }
-
-      cpuSetupState.selectedBottomPlayerId = playerId;
-      startLocalModeGame({
-        mode: LOCAL_MODE_TYPES.cpuVsCpu,
-        topPlayerId: cpuSetupState.selectedTopPlayerId,
-        bottomPlayerId: cpuSetupState.selectedBottomPlayerId,
-        startingPlayer: 0,
-      });
+      applySelectedCpuSetupPlayer(player);
     }
 
     function choosePlayerVsCpuStarter(playerIdx) {
       if (!cpuSetupState.open || cpuSetupState.mode !== LOCAL_MODE_TYPES.playerVsCpu) return;
       startLocalModeGame({
         mode: LOCAL_MODE_TYPES.playerVsCpu,
-        topPlayerId: cpuSetupState.selectedTopPlayerId,
-        bottomPlayerId: null,
+        topPlayer: cpuSetupState.selectedTopPlayer,
+        bottomPlayer: null,
         startingPlayer: playerIdx,
       });
     }
 
     function getCpuSetupTitle() {
+      if (cpuSetupState.step === 'configure-player') {
+        const player = getAvailablePlayerById(cpuSetupState.configuringPlayerId);
+        return 'Configure ' + (player ? player.name : 'Solver');
+      }
       if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) {
         return cpuSetupState.step === 'pick-starter' ? 'Who Goes First?' : 'Choose Opponent';
       }
@@ -2522,18 +2771,81 @@
     }
 
     function getCpuSetupSubtitle() {
+      if (cpuSetupState.step === 'configure-player') {
+        const player = getAvailablePlayerById(cpuSetupState.configuringPlayerId);
+        return (player ? player.name : 'This solver') + ' uses these settings for this instance only. Saving also updates the defaults for the next time you choose this solver.';
+      }
       if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) {
         if (cpuSetupState.step === 'pick-starter') {
-          const cpuPlayer = getAvailablePlayerById(cpuSetupState.selectedTopPlayerId);
+          const cpuPlayer = cpuSetupState.selectedTopPlayer;
           return 'Human stays on the bottom row. Choose whether you or ' + cpuPlayer.name + ' takes the first turn.';
         }
         return 'Pick an automated opponent, then choose who gets the first move.';
       }
       if (cpuSetupState.step === 'pick-player2') {
-        const topPlayer = getAvailablePlayerById(cpuSetupState.selectedTopPlayerId);
+        const topPlayer = cpuSetupState.selectedTopPlayer;
         return 'Choose the automated player for the bottom row. ' + topPlayer.name + ' will be Player 1 and go first.';
       }
       return 'Choose the automated player for the top row. Player 1 will go first.';
+    }
+
+    function renderLookaheadConfigForm(player, config) {
+      const normalizedConfig = normalizeRustLookaheadConfig(config);
+      const implementationLabel = player.engineKind === 'rust' ? 'Rust/WASM' : 'JavaScript';
+      const instanceLabel = cpuSetupState.configuringSlot === 'bottom' ? 'bottom row player' : 'top row player';
+      const timeSectionStyle = normalizedConfig.searchMode === 'time' ? '' : ' style="display:none;"';
+      const depthSectionStyle = normalizedConfig.searchMode === 'depth' ? '' : ' style="display:none;"';
+
+      return ''
+        + '<div class="setup-summary-card">'
+        + '<strong>' + player.name + '</strong><br>'
+        + '<span class="setup-description">' + implementationLabel + ' lookahead solver for the ' + instanceLabel + '.</span>'
+        + '</div>'
+        + '<div class="setup-config-form">'
+        + '<div class="setup-config-section">'
+        + '<h3>Search Strategy</h3>'
+        + '<p class="setup-helper-text">Switch between a time-bound search and a fixed-depth search for this instance.</p>'
+        + '<div class="setup-field">'
+        + '<label for="cpu-config-search-mode">Search Mode</label>'
+        + '<select class="setup-input" id="cpu-config-search-mode" onchange="updateCpuSetupLookaheadConfig(\'searchMode\', this.value)">'
+        + '<option value="time"' + (normalizedConfig.searchMode === 'time' ? ' selected' : '') + '>Time-bound iterative deepening</option>'
+        + '<option value="depth"' + (normalizedConfig.searchMode === 'depth' ? ' selected' : '') + '>Fixed depth</option>'
+        + '</select>'
+        + '</div>'
+        + '<div class="setup-field"' + timeSectionStyle + '>'
+        + '<label for="cpu-config-time-budget">Time Budget (ms)</label>'
+        + '<input class="setup-input" id="cpu-config-time-budget" type="number" min="0" max="60000" step="1" value="' + normalizedConfig.timeBudgetMs + '" onchange="updateCpuSetupLookaheadConfig(\'timeBudgetMs\', this.value)">'
+        + '</div>'
+        + '<div class="setup-field"' + depthSectionStyle + '>'
+        + '<label for="cpu-config-max-depth">Fixed Depth</label>'
+        + '<input class="setup-input" id="cpu-config-max-depth" type="number" min="1" max="42" step="1" value="' + normalizedConfig.maxDepth + '" onchange="updateCpuSetupLookaheadConfig(\'maxDepth\', this.value)">'
+        + '</div>'
+        + '</div>'
+        + '<div class="setup-config-section">'
+        + '<h3>Parallel Search</h3>'
+        + '<p class="setup-helper-text">Use worker-based multicore search when the environment supports it. Fallback stays automatic.</p>'
+        + '<label class="setup-checkbox-row"><input id="cpu-config-use-parallel" type="checkbox" ' + (normalizedConfig.useParallelWorkers ? 'checked ' : '') + 'onchange="toggleCpuSetupLookaheadBoolean(\'useParallelWorkers\', this.checked)"> <span>Enable parallel workers</span></label>'
+        + '<div class="setup-field">'
+        + '<label for="cpu-config-max-workers">Max Workers</label>'
+        + '<input class="setup-input" id="cpu-config-max-workers" type="number" min="1" max="' + MAX_PARALLEL_LOOKAHEAD_WORKERS + '" step="1" value="' + normalizedConfig.maxWorkers + '" onchange="updateCpuSetupLookaheadConfig(\'maxWorkers\', this.value)">'
+        + '</div>'
+        + '</div>'
+        + '<div class="setup-config-section">'
+        + '<h3>Evaluation Weights</h3>'
+        + '<p class="setup-helper-text">These weights shape how the solver scores positions before it reaches a terminal result.</p>'
+        + '<div class="setup-config-grid">'
+        + '<div class="setup-field"><label for="cpu-config-terminal">Terminal Score</label><input class="setup-input" id="cpu-config-terminal" type="number" step="1" value="' + normalizedConfig.terminalScoreWeight + '" onchange="updateCpuSetupLookaheadConfig(\'terminalScoreWeight\', this.value)"></div>'
+        + '<div class="setup-field"><label for="cpu-config-store">Store Score</label><input class="setup-input" id="cpu-config-store" type="number" step="1" value="' + normalizedConfig.storeScoreWeight + '" onchange="updateCpuSetupLookaheadConfig(\'storeScoreWeight\', this.value)"></div>'
+        + '<div class="setup-field"><label for="cpu-config-pit">Pit Score</label><input class="setup-input" id="cpu-config-pit" type="number" step="1" value="' + normalizedConfig.pitScoreWeight + '" onchange="updateCpuSetupLookaheadConfig(\'pitScoreWeight\', this.value)"></div>'
+        + '<div class="setup-field"><label for="cpu-config-extra-turn">Extra Turn</label><input class="setup-input" id="cpu-config-extra-turn" type="number" step="1" value="' + normalizedConfig.extraTurnWeight + '" onchange="updateCpuSetupLookaheadConfig(\'extraTurnWeight\', this.value)"></div>'
+        + '<div class="setup-field"><label for="cpu-config-capture">Capture</label><input class="setup-input" id="cpu-config-capture" type="number" step="1" value="' + normalizedConfig.captureWeight + '" onchange="updateCpuSetupLookaheadConfig(\'captureWeight\', this.value)"></div>'
+        + '<div class="setup-field"><label for="cpu-config-mobility">Mobility</label><input class="setup-input" id="cpu-config-mobility" type="number" step="1" value="' + normalizedConfig.mobilityWeight + '" onchange="updateCpuSetupLookaheadConfig(\'mobilityWeight\', this.value)"></div>'
+        + '</div>'
+        + '</div>'
+        + '<div class="setup-actions">'
+        + '<button class="setup-primary-btn" id="cpu-config-confirm-btn" onclick="confirmCpuSetupLookaheadConfig()">Save & Continue</button>'
+        + '</div>'
+        + '</div>';
     }
 
     function renderCpuSetup() {
@@ -2557,8 +2869,18 @@
         ? 'hidden'
         : 'visible';
 
+      if (cpuSetupState.step === 'configure-player') {
+        const player = getAvailablePlayerById(cpuSetupState.configuringPlayerId);
+        if (!player || !cpuSetupState.draftLookaheadConfig) {
+          closeCpuSetup();
+          return;
+        }
+        contentEl.innerHTML = renderLookaheadConfigForm(player, cpuSetupState.draftLookaheadConfig);
+        return;
+      }
+
       if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu && cpuSetupState.step === 'pick-starter') {
-        const cpuPlayer = getAvailablePlayerById(cpuSetupState.selectedTopPlayerId);
+        const cpuPlayer = cpuSetupState.selectedTopPlayer;
         contentEl.innerHTML =
           '<div class="setup-summary-card"><strong>Opponent:</strong> ' + cpuPlayer.name + '<br><span class="setup-description">' + cpuPlayer.description + '</span></div>'
           + '<div class="setup-actions">'

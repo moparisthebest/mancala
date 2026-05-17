@@ -166,11 +166,11 @@ function getBestLookaheadCapture(boardState, playerIdx) {
     }, 0);
 }
 
-function evaluateLookaheadBoard(boardState, maximizingPlayerIdx) {
+function evaluateLookaheadBoard(boardState, maximizingPlayerIdx, config) {
   const opponentIdx = 1 - maximizingPlayerIdx;
   const storeDiff = boardState.stores[maximizingPlayerIdx] - boardState.stores[opponentIdx];
   if (boardState.gameOver) {
-    return storeDiff * LOOKAHEAD_TERMINAL_SCORE_WEIGHT;
+    return storeDiff * config.terminalScoreWeight;
   }
 
   const pitDiff = sumLookaheadPitCounts(boardState, maximizingPlayerIdx) - sumLookaheadPitCounts(boardState, opponentIdx);
@@ -178,17 +178,17 @@ function evaluateLookaheadBoard(boardState, maximizingPlayerIdx) {
   const extraTurnDiff = countLookaheadExtraTurnMoves(boardState, maximizingPlayerIdx) - countLookaheadExtraTurnMoves(boardState, opponentIdx);
   const captureDiff = getBestLookaheadCapture(boardState, maximizingPlayerIdx) - getBestLookaheadCapture(boardState, opponentIdx);
 
-  return (storeDiff * LOOKAHEAD_STORE_SCORE_WEIGHT)
-    + (pitDiff * LOOKAHEAD_PIT_SCORE_WEIGHT)
-    + (extraTurnDiff * LOOKAHEAD_EXTRA_TURN_WEIGHT)
-    + (captureDiff * LOOKAHEAD_CAPTURE_WEIGHT)
-    + (mobilityDiff * LOOKAHEAD_MOBILITY_WEIGHT);
+  return (storeDiff * config.storeScoreWeight)
+    + (pitDiff * config.pitScoreWeight)
+    + (extraTurnDiff * config.extraTurnWeight)
+    + (captureDiff * config.captureWeight)
+    + (mobilityDiff * config.mobilityWeight);
 }
 
-function searchJavaScriptLookahead(boardState, maximizingPlayerIdx, depth, alpha, beta, deadlineMs) {
+function searchJavaScriptLookahead(boardState, maximizingPlayerIdx, depth, config, alpha, beta, deadlineMs) {
   if (deadlineMs != null && performance.now() >= deadlineMs) {
     return {
-      score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx),
+      score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx, config),
       bestMove: -1,
       completed: false,
     };
@@ -196,7 +196,7 @@ function searchJavaScriptLookahead(boardState, maximizingPlayerIdx, depth, alpha
 
   if (depth === 0 || boardState.gameOver) {
     return {
-      score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx),
+      score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx, config),
       bestMove: -1,
       completed: true,
     };
@@ -205,7 +205,7 @@ function searchJavaScriptLookahead(boardState, maximizingPlayerIdx, depth, alpha
   const orderedPitIndices = getOrderedLookaheadPitIndices(boardState);
   if (orderedPitIndices.length === 0) {
     return {
-      score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx),
+      score: evaluateLookaheadBoard(boardState, maximizingPlayerIdx, config),
       bestMove: -1,
       completed: true,
     };
@@ -220,7 +220,7 @@ function searchJavaScriptLookahead(boardState, maximizingPlayerIdx, depth, alpha
     const nextBoardState = simulateMove(boardState, boardState.currentPlayer, pitIdx);
     if (!nextBoardState) continue;
 
-    const childResult = searchJavaScriptLookahead(nextBoardState, maximizingPlayerIdx, depth - 1, alpha, beta, deadlineMs);
+    const childResult = searchJavaScriptLookahead(nextBoardState, maximizingPlayerIdx, depth - 1, config, alpha, beta, deadlineMs);
     if (!childResult.completed) {
       return {
         score: childResult.score,
@@ -302,6 +302,7 @@ function runJavaScriptDepthSearch(message) {
     message.boardState,
     message.maximizingPlayerIdx,
     message.depth,
+    message.config,
     LOOKAHEAD_MIN_SCORE,
     LOOKAHEAD_MAX_SCORE,
     deadlineMs
@@ -314,9 +315,17 @@ function runJavaScriptDepthSearch(message) {
 
 function runRustDepthSearch(message) {
   const args = encodeBoardStateForSolver(message.boardState);
+  const configArgs = [
+    message.config.terminalScoreWeight,
+    message.config.storeScoreWeight,
+    message.config.pitScoreWeight,
+    message.config.extraTurnWeight,
+    message.config.captureWeight,
+    message.config.mobilityWeight,
+  ];
   const packedResult = wasmCpuEngineExports.mancala_solver_search_score_for_time.apply(
     null,
-    args.concat([message.maximizingPlayerIdx, message.depth, message.remainingMs])
+    args.concat([message.maximizingPlayerIdx, message.depth, message.remainingMs]).concat(configArgs)
   );
   return decodePackedScoreResult(packedResult);
 }

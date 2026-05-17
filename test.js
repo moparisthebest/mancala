@@ -1371,10 +1371,10 @@ async function runTests() {
             )(fallbackBoard, 0);
           }),
           javascriptTimedChoice: await AVAILABLE_PLAYERS.find(p => p.id === 'alice').chooseMove(comboBoard, 0),
-          javascriptDepthChoice: chooseJavaScriptLookaheadMoveForDepth(comboBoard, 0, 4),
-          rustDepthChoice: await chooseRustLookaheadMoveForDepth(comboBoard, 0, 4),
-          rustTimedChoice: await chooseRustLookaheadMoveForTime(comboBoard, 0, 25),
-          rustFactoryChoice: await createRustLookaheadChooser({ maxDepth: 4, timeBudgetMs: 0 })(comboBoard, 0),
+          javascriptDepthChoice: chooseJavaScriptLookaheadMoveForDepth(comboBoard, 0, { searchMode: 'depth', maxDepth: 4 }),
+          rustDepthChoice: await chooseRustLookaheadMoveForDepth(comboBoard, 0, { searchMode: 'depth', maxDepth: 4 }),
+          rustTimedChoice: await chooseRustLookaheadMoveForTime(comboBoard, 0, { searchMode: 'time', timeBudgetMs: 25 }),
+          rustFactoryChoice: await createRustLookaheadChooser({ searchMode: 'depth', maxDepth: 4 })(comboBoard, 0),
           workerFallbackChoices: await (async function() {
             const originalWorker = window.Worker;
             try {
@@ -1393,8 +1393,8 @@ async function runTests() {
               results: entry.depths.map(function(depth) {
                 return {
                   depth,
-                  javascriptMove: chooseJavaScriptLookaheadMoveForDepth(entry.state, entry.state.currentPlayer, depth),
-                  rustMove: chooseRustLookaheadMoveForDepth(entry.state, entry.state.currentPlayer, depth),
+                  javascriptMove: chooseJavaScriptLookaheadMoveForDepth(entry.state, entry.state.currentPlayer, { searchMode: 'depth', maxDepth: depth }),
+                  rustMove: chooseRustLookaheadMoveForDepth(entry.state, entry.state.currentPlayer, { searchMode: 'depth', maxDepth: depth }),
                 };
               }),
             };
@@ -1483,6 +1483,73 @@ async function runTests() {
     assert(pvcpuSetupOpen.aliceBtn === 'Choose Alice', `Player vs CPU chooser lists Alice: "${pvcpuSetupOpen.aliceBtn}"`);
     assert(pvcpuSetupOpen.wasmLookaheadBtn === 'Choose Ashton', `Player vs CPU chooser lists Ashton once the solver loads: "${pvcpuSetupOpen.wasmLookaheadBtn}"`);
 
+    await pagePVC.evaluate(() => document.getElementById('cpu-select-alice').click());
+    await sleep(120);
+    const aliceConfigScreen = await pagePVC.evaluate(() => ({
+      title: document.getElementById('cpu-setup-title').textContent,
+      subtitle: document.getElementById('cpu-setup-subtitle').textContent,
+      overflowY: getComputedStyle(document.getElementById('cpu-setup-overlay')).overflowY,
+      searchMode: document.getElementById('cpu-config-search-mode').value,
+      timeBudget: document.getElementById('cpu-config-time-budget').value,
+      useParallel: document.getElementById('cpu-config-use-parallel').checked,
+      maxWorkers: document.getElementById('cpu-config-max-workers').value,
+    }));
+    assert(aliceConfigScreen.title === 'Configure Alice', `Alice opens a dedicated config screen: "${aliceConfigScreen.title}"`);
+    assert(aliceConfigScreen.subtitle.includes('instance only'), `Alice config subtitle explains instance-only settings: "${aliceConfigScreen.subtitle}"`);
+    assert(aliceConfigScreen.overflowY === 'auto', `Alice config screen stays scrollable: ${aliceConfigScreen.overflowY}`);
+    assert(aliceConfigScreen.searchMode === 'time' && aliceConfigScreen.timeBudget === '1000',
+      `Alice config screen starts with timed-search defaults: mode=${aliceConfigScreen.searchMode}, budget=${aliceConfigScreen.timeBudget}`);
+    assert(aliceConfigScreen.useParallel && aliceConfigScreen.maxWorkers === '6',
+      `Alice config screen exposes parallel defaults: enabled=${aliceConfigScreen.useParallel}, maxWorkers=${aliceConfigScreen.maxWorkers}`);
+
+    await pagePVC.evaluate(() => {
+      document.getElementById('cpu-config-search-mode').value = 'depth';
+      document.getElementById('cpu-config-search-mode').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-max-depth').value = '6';
+      document.getElementById('cpu-config-max-depth').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-use-parallel').checked = false;
+      document.getElementById('cpu-config-use-parallel').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-max-workers').value = '2';
+      document.getElementById('cpu-config-max-workers').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-store').value = '900';
+      document.getElementById('cpu-config-store').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-confirm-btn').click();
+    });
+    await sleep(120);
+    const aliceStarterScreen = await pagePVC.evaluate(() => ({
+      title: document.getElementById('cpu-setup-title').textContent,
+      cpuFirst: document.getElementById('cpu-setup-cpu-first-btn').textContent,
+      storedDefaults: JSON.parse(localStorage.getItem('mancala-lookahead-default-alice')),
+    }));
+    assert(aliceStarterScreen.title === 'Who Goes First?', `Alice config continues into the starter screen: "${aliceStarterScreen.title}"`);
+    assert(aliceStarterScreen.cpuFirst === 'Alice goes first', `Alice starter screen keeps the selected solver name: "${aliceStarterScreen.cpuFirst}"`);
+    assert(aliceStarterScreen.storedDefaults.searchMode === 'depth'
+      && aliceStarterScreen.storedDefaults.maxDepth === 6
+      && aliceStarterScreen.storedDefaults.useParallelWorkers === false
+      && aliceStarterScreen.storedDefaults.maxWorkers === 2
+      && aliceStarterScreen.storedDefaults.storeScoreWeight === 900,
+      `Alice config save updates the stored defaults: ${JSON.stringify(aliceStarterScreen.storedDefaults)}`);
+
+    await pagePVC.evaluate(() => document.getElementById('cpu-setup-back-btn').click());
+    await sleep(120);
+    await pagePVC.evaluate(() => document.getElementById('cpu-select-alice').click());
+    await sleep(120);
+    const aliceDefaultsReloaded = await pagePVC.evaluate(() => ({
+      searchMode: document.getElementById('cpu-config-search-mode').value,
+      maxDepth: document.getElementById('cpu-config-max-depth').value,
+      useParallel: document.getElementById('cpu-config-use-parallel').checked,
+      maxWorkers: document.getElementById('cpu-config-max-workers').value,
+      storeWeight: document.getElementById('cpu-config-store').value,
+    }));
+    assert(aliceDefaultsReloaded.searchMode === 'depth'
+      && aliceDefaultsReloaded.maxDepth === '6'
+      && aliceDefaultsReloaded.useParallel === false
+      && aliceDefaultsReloaded.maxWorkers === '2'
+      && aliceDefaultsReloaded.storeWeight === '900',
+      `Alice config screen reloads the saved defaults: ${JSON.stringify(aliceDefaultsReloaded)}`);
+    await pagePVC.evaluate(() => document.getElementById('cpu-setup-back-btn').click());
+    await sleep(120);
+
     await pagePVC.evaluate(() => document.getElementById('cpu-help-bob').click());
     await sleep(80);
     const bobDescription = await pagePVC.$eval('#cpu-description-bob', el => ({
@@ -1532,6 +1599,59 @@ async function runTests() {
     assert(pvcpuAfterBobMove.messages === 0, `Player vs CPU stays local and sends no webxdc updates: ${pvcpuAfterBobMove.messages}`);
     await pagePVC.close();
     await playerCpuContext.close();
+
+    console.log('\n=== CPU vs CPU: per-instance solver config ===');
+    const cpuConfigContext = browser.createBrowserContext
+      ? await browser.createBrowserContext()
+      : await browser.createIncognitoBrowserContext();
+    const pageConfigCVC = await cpuConfigContext.newPage();
+    pageConfigCVC.on('console', m => console.log(`    [CVC CONFIG] ${m.text()}`));
+    pageConfigCVC.on('pageerror', e => console.log(`    [CVC CONFIG ERROR] ${e.message}`));
+    await configurePageSettings(pageConfigCVC, {}, { beforeNavigation: true });
+    await pageConfigCVC.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle0' });
+    await pageConfigCVC.waitForFunction(() => window.wasmPlayersLoadState === 'ready', { timeout: 15000 });
+    await pageConfigCVC.evaluate(() => {
+      cpuTurnDelayMs = 999999;
+      document.getElementById('cpu-vs-cpu-btn').click();
+    });
+    await sleep(120);
+    await pageConfigCVC.evaluate(() => document.getElementById('cpu-select-wasm-lookahead').click());
+    await sleep(120);
+    await pageConfigCVC.evaluate(() => {
+      document.getElementById('cpu-config-time-budget').value = '111';
+      document.getElementById('cpu-config-time-budget').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-max-workers').value = '2';
+      document.getElementById('cpu-config-max-workers').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-confirm-btn').click();
+    });
+    await sleep(120);
+    await pageConfigCVC.evaluate(() => document.getElementById('cpu-select-wasm-lookahead').click());
+    await sleep(120);
+    await pageConfigCVC.evaluate(() => {
+      document.getElementById('cpu-config-time-budget').value = '222';
+      document.getElementById('cpu-config-time-budget').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-max-workers').value = '3';
+      document.getElementById('cpu-config-max-workers').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-confirm-btn').click();
+    });
+    await sleep(120);
+    const ashtonInstanceConfigs = await pageConfigCVC.evaluate(() => ({
+      setupClosed: !document.getElementById('cpu-setup-overlay').classList.contains('open'),
+      players: localAutomatedPlayers.map(player => ({
+        name: player && player.name,
+        config: player && player.solverConfig,
+      })),
+    }));
+    assert(ashtonInstanceConfigs.setupClosed, 'CPU vs CPU closes the config flow after both Ashton instances are configured');
+    assert(ashtonInstanceConfigs.players[0].name === 'Ashton' && ashtonInstanceConfigs.players[1].name === 'Ashton',
+      `CPU vs CPU keeps both configurable instances as Ashton: ${JSON.stringify(ashtonInstanceConfigs.players)}`);
+    assert(ashtonInstanceConfigs.players[0].config.timeBudgetMs === 111
+      && ashtonInstanceConfigs.players[0].config.maxWorkers === 2
+      && ashtonInstanceConfigs.players[1].config.timeBudgetMs === 222
+      && ashtonInstanceConfigs.players[1].config.maxWorkers === 3,
+      `CPU vs CPU keeps per-instance Ashton configs distinct: ${JSON.stringify(ashtonInstanceConfigs.players)}`);
+    await pageConfigCVC.close();
+    await cpuConfigContext.close();
 
     console.log('\n=== Optional Ashton solver hides on load failure ===');
     const missingSolverContext = browser.createBrowserContext
