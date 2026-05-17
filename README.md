@@ -157,6 +157,21 @@ Useful flags:
 
 The tuner runs deterministic self-play games, reports the best parameter set it found for **player 1** and **player 2** separately, and prints timing/depth stats for the final validation games on the current machine.
 
+### Benchmark opening-state depth
+
+```sh
+cd mancala-solver
+cargo run --release --bin opening_depth_limit
+```
+
+Useful flags:
+
+- `--budget-ms N` to change the target per-move wall-clock budget; the default is `2000`
+- `--max-depth N` to keep probing deeper before stopping
+- `--samples N` to run multiple timings per depth and use the median
+
+This benchmark measures the **initial Mancala position** and reports the deepest **fixed-depth** search whose **median** runtime still fits inside the chosen budget on the current machine.
+
 Examples:
 
 ```sh
@@ -170,6 +185,8 @@ bash start-server.sh --no-wasm
 bash start-server.sh - 3000 --no-webxdc --no-wasm
 cd mancala-solver && cargo run --release --bin self_play_tune
 cd mancala-solver && cargo run --release --bin self_play_tune -- --explore-budget-ms 250 --final-budget-ms 2000 --cycles 3
+cd mancala-solver && cargo run --release --bin opening_depth_limit
+cd mancala-solver && cargo run --release --bin opening_depth_limit -- --budget-ms 2000 --max-depth 30 --samples 5
 ```
 
 `--no-webxdc` makes `/webxdc.js` return 404 so you can test the plain-web local/PWA fallback.
