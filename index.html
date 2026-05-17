@@ -1658,8 +1658,14 @@
     const MAX_PARALLEL_LOOKAHEAD_WORKERS = 6;
     const DEFAULT_LOOKAHEAD_DEPTH = 42;
     const BASIC_LOOKAHEAD_MIN_TIME_BUDGET_MS = 50;
+    const BASIC_LOOKAHEAD_SPLIT_TIME_BUDGET_MS = 5000;
     const BASIC_LOOKAHEAD_MAX_TIME_BUDGET_MS = 15000;
-    const BASIC_LOOKAHEAD_TIME_STEP_MS = 50;
+    const BASIC_LOOKAHEAD_FINE_TIME_STEP_MS = 50;
+    const BASIC_LOOKAHEAD_COARSE_TIME_STEP_MS = 500;
+    const BASIC_LOOKAHEAD_FINE_STEP_COUNT = (BASIC_LOOKAHEAD_SPLIT_TIME_BUDGET_MS - BASIC_LOOKAHEAD_MIN_TIME_BUDGET_MS) / BASIC_LOOKAHEAD_FINE_TIME_STEP_MS;
+    const BASIC_LOOKAHEAD_COARSE_STEP_COUNT = (BASIC_LOOKAHEAD_MAX_TIME_BUDGET_MS - BASIC_LOOKAHEAD_SPLIT_TIME_BUDGET_MS) / BASIC_LOOKAHEAD_COARSE_TIME_STEP_MS;
+    const BASIC_LOOKAHEAD_SLIDER_HALF_RANGE = BASIC_LOOKAHEAD_FINE_STEP_COUNT;
+    const BASIC_LOOKAHEAD_SLIDER_MAX = BASIC_LOOKAHEAD_SLIDER_HALF_RANGE * 2;
     const CPU_SETUP_HINT_MODE = 'hint-helper';
     const HELP_BUTTON_PATTERN = 'abbaabba';
     const HELP_BUTTON_PATTERN_WINDOW_MS = 5000;
@@ -1722,7 +1728,37 @@
       const parsed = Number(timeBudgetMs);
       if (!Number.isFinite(parsed)) return DEFAULT_LOOKAHEAD_CONFIG.timeBudgetMs;
       const clamped = Math.max(BASIC_LOOKAHEAD_MIN_TIME_BUDGET_MS, Math.min(BASIC_LOOKAHEAD_MAX_TIME_BUDGET_MS, parsed));
-      return Math.round(clamped / BASIC_LOOKAHEAD_TIME_STEP_MS) * BASIC_LOOKAHEAD_TIME_STEP_MS;
+      if (clamped <= BASIC_LOOKAHEAD_SPLIT_TIME_BUDGET_MS) {
+        return BASIC_LOOKAHEAD_MIN_TIME_BUDGET_MS
+          + (Math.round((clamped - BASIC_LOOKAHEAD_MIN_TIME_BUDGET_MS) / BASIC_LOOKAHEAD_FINE_TIME_STEP_MS) * BASIC_LOOKAHEAD_FINE_TIME_STEP_MS);
+      }
+      return BASIC_LOOKAHEAD_SPLIT_TIME_BUDGET_MS
+        + (Math.round((clamped - BASIC_LOOKAHEAD_SPLIT_TIME_BUDGET_MS) / BASIC_LOOKAHEAD_COARSE_TIME_STEP_MS) * BASIC_LOOKAHEAD_COARSE_TIME_STEP_MS);
+    }
+
+    function basicLookaheadSliderPositionToTimeBudget(value) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return DEFAULT_LOOKAHEAD_CONFIG.timeBudgetMs;
+      const clamped = Math.max(0, Math.min(BASIC_LOOKAHEAD_SLIDER_MAX, Math.round(parsed)));
+      if (clamped <= BASIC_LOOKAHEAD_SLIDER_HALF_RANGE) {
+        return BASIC_LOOKAHEAD_MIN_TIME_BUDGET_MS + (clamped * BASIC_LOOKAHEAD_FINE_TIME_STEP_MS);
+      }
+      const coarseStep = Math.round(
+        ((clamped - BASIC_LOOKAHEAD_SLIDER_HALF_RANGE) / BASIC_LOOKAHEAD_SLIDER_HALF_RANGE) * BASIC_LOOKAHEAD_COARSE_STEP_COUNT
+      );
+      return normalizeBasicLookaheadTimeBudget(
+        BASIC_LOOKAHEAD_SPLIT_TIME_BUDGET_MS + (coarseStep * BASIC_LOOKAHEAD_COARSE_TIME_STEP_MS)
+      );
+    }
+
+    function basicLookaheadTimeBudgetToSliderPosition(timeBudgetMs) {
+      const normalizedBudget = normalizeBasicLookaheadTimeBudget(timeBudgetMs);
+      if (normalizedBudget <= BASIC_LOOKAHEAD_SPLIT_TIME_BUDGET_MS) {
+        return Math.round((normalizedBudget - BASIC_LOOKAHEAD_MIN_TIME_BUDGET_MS) / BASIC_LOOKAHEAD_FINE_TIME_STEP_MS);
+      }
+      const coarseStep = Math.round((normalizedBudget - BASIC_LOOKAHEAD_SPLIT_TIME_BUDGET_MS) / BASIC_LOOKAHEAD_COARSE_TIME_STEP_MS);
+      return BASIC_LOOKAHEAD_SLIDER_HALF_RANGE
+        + Math.round((coarseStep / BASIC_LOOKAHEAD_COARSE_STEP_COUNT) * BASIC_LOOKAHEAD_SLIDER_HALF_RANGE);
     }
 
     function normalizeLookaheadSearchMode(value) {
@@ -2998,7 +3034,7 @@
 
     function updateCpuSetupBasicTimeBudget(value) {
       if (!cpuSetupState.draftLookaheadConfig) return;
-      const normalizedBudget = normalizeBasicLookaheadTimeBudget(value);
+      const normalizedBudget = basicLookaheadSliderPositionToTimeBudget(value);
       cpuSetupState.draftLookaheadConfig = Object.assign({}, cpuSetupState.draftLookaheadConfig, {
         timeBudgetMs: normalizedBudget,
       });
@@ -3009,7 +3045,7 @@
       const valueEl = document.getElementById('cpu-config-basic-time-budget-value');
       const difficultyEl = document.getElementById('cpu-config-basic-difficulty');
       const sliderEl = document.getElementById('cpu-config-basic-time-budget');
-      if (sliderEl) sliderEl.value = String(timeBudgetMs);
+      if (sliderEl) sliderEl.value = String(basicLookaheadTimeBudgetToSliderPosition(timeBudgetMs));
       if (valueEl) valueEl.textContent = timeBudgetMs + 'ms';
       if (difficultyEl) difficultyEl.textContent = 'Expected difficulty: ' + getBasicLookaheadDifficultyLabel(timeBudgetMs) + '.';
     }
@@ -3525,7 +3561,7 @@
         + '<p class="setup-helper-text">Pick how long this solver should think on each move. More time usually means a stronger opponent.</p>'
         + '<div class="setup-field">'
         + '<label for="cpu-config-basic-time-budget">Time Budget (ms)</label>'
-        + '<input class="setup-input" id="cpu-config-basic-time-budget" type="range" min="' + BASIC_LOOKAHEAD_MIN_TIME_BUDGET_MS + '" max="' + BASIC_LOOKAHEAD_MAX_TIME_BUDGET_MS + '" step="' + BASIC_LOOKAHEAD_TIME_STEP_MS + '" value="' + normalizedConfig.timeBudgetMs + '" oninput="updateCpuSetupBasicTimeBudget(this.value)">'
+        + '<input class="setup-input" id="cpu-config-basic-time-budget" type="range" min="0" max="' + BASIC_LOOKAHEAD_SLIDER_MAX + '" step="1" value="' + basicLookaheadTimeBudgetToSliderPosition(normalizedConfig.timeBudgetMs) + '" oninput="updateCpuSetupBasicTimeBudget(this.value)">'
         + '<div class="setup-inline-value" id="cpu-config-basic-time-budget-value">' + normalizedConfig.timeBudgetMs + 'ms</div>'
         + '<p class="setup-difficulty" id="cpu-config-basic-difficulty">Expected difficulty: ' + difficultyLabel + '.</p>'
         + '</div>'

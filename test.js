@@ -1630,7 +1630,7 @@ async function runTests() {
       title: document.getElementById('cpu-setup-title').textContent,
       subtitle: document.getElementById('cpu-setup-subtitle').textContent,
       overflowY: getComputedStyle(document.getElementById('cpu-setup-overlay')).overflowY,
-      basicTimeBudget: document.getElementById('cpu-config-basic-time-budget').value,
+      basicTimeBudgetSliderValue: document.getElementById('cpu-config-basic-time-budget').value,
       basicTimeBudgetMin: document.getElementById('cpu-config-basic-time-budget').min,
       basicTimeBudgetMax: document.getElementById('cpu-config-basic-time-budget').max,
       basicTimeBudgetStep: document.getElementById('cpu-config-basic-time-budget').step,
@@ -1645,12 +1645,12 @@ async function runTests() {
     assert(aliceConfigScreen.title === 'Configure Alice', `Alice opens a dedicated config screen: "${aliceConfigScreen.title}"`);
     assert(aliceConfigScreen.subtitle.includes('instance only'), `Alice config subtitle explains instance-only settings: "${aliceConfigScreen.subtitle}"`);
     assert(aliceConfigScreen.overflowY === 'auto', `Alice config screen stays scrollable: ${aliceConfigScreen.overflowY}`);
-    assert(aliceConfigScreen.basicTimeBudget === '1000'
-      && aliceConfigScreen.basicTimeBudgetMin === '50'
-      && aliceConfigScreen.basicTimeBudgetMax === '15000'
-      && aliceConfigScreen.basicTimeBudgetStep === '50',
-      `Alice basic mode starts with the 50ms-15000ms slider at 1000ms: ${JSON.stringify({
-        value: aliceConfigScreen.basicTimeBudget,
+    assert(aliceConfigScreen.basicTimeBudgetSliderValue === '19'
+      && aliceConfigScreen.basicTimeBudgetMin === '0'
+      && aliceConfigScreen.basicTimeBudgetMax === '198'
+      && aliceConfigScreen.basicTimeBudgetStep === '1',
+      `Alice basic mode starts with the split-range slider positioned at 1000ms: ${JSON.stringify({
+        value: aliceConfigScreen.basicTimeBudgetSliderValue,
         min: aliceConfigScreen.basicTimeBudgetMin,
         max: aliceConfigScreen.basicTimeBudgetMax,
         step: aliceConfigScreen.basicTimeBudgetStep,
@@ -1708,14 +1708,16 @@ async function runTests() {
     });
     await sleep(120);
     const aliceResetState = await pagePVC.evaluate(() => ({
-      basicTimeBudget: document.getElementById('cpu-config-basic-time-budget').value,
+      basicTimeBudgetSliderValue: document.getElementById('cpu-config-basic-time-budget').value,
+      basicTimeBudgetValueText: document.getElementById('cpu-config-basic-time-budget-value').textContent,
       basicDifficulty: document.getElementById('cpu-config-basic-difficulty').textContent,
       extendAnimationBudget: document.getElementById('cpu-config-extend-animation-budget').checked,
       advancedModeLabel: document.getElementById('cpu-config-advanced-mode-btn').textContent,
       hasAdvancedFields: !!document.getElementById('cpu-config-search-mode'),
       storedDefaults: localStorage.getItem('mancala-lookahead-default-alice'),
     }));
-    assert(aliceResetState.basicTimeBudget === '15000'
+    assert(aliceResetState.basicTimeBudgetSliderValue === '198'
+      && aliceResetState.basicTimeBudgetValueText === '15000ms'
       && aliceResetState.basicDifficulty === 'Expected difficulty: Impossible.'
       && aliceResetState.extendAnimationBudget === true
       && aliceResetState.advancedModeLabel === 'Advanced Mode'
@@ -1734,10 +1736,13 @@ async function runTests() {
     });
     await sleep(120);
     const aliceLowClampState = await pagePVC.evaluate(() => ({
-      basicTimeBudget: document.getElementById('cpu-config-basic-time-budget').value,
+      basicTimeBudgetSliderValue: document.getElementById('cpu-config-basic-time-budget').value,
+      basicTimeBudgetValueText: document.getElementById('cpu-config-basic-time-budget-value').textContent,
       basicDifficulty: document.getElementById('cpu-config-basic-difficulty').textContent,
     }));
-    assert(aliceLowClampState.basicTimeBudget === '50' && aliceLowClampState.basicDifficulty === 'Expected difficulty: Easy.',
+    assert(aliceLowClampState.basicTimeBudgetSliderValue === '0'
+      && aliceLowClampState.basicTimeBudgetValueText === '50ms'
+      && aliceLowClampState.basicDifficulty === 'Expected difficulty: Easy.',
       `Switching back to basic also clamps tiny advanced budgets up to 50ms: ${JSON.stringify(aliceLowClampState)}`);
 
     await pagePVC.evaluate(() => {
@@ -1925,11 +1930,13 @@ async function runTests() {
     await sleep(150);
     const hintConfigBasic = await pageHintSetup.evaluate(() => ({
       title: document.getElementById('cpu-setup-title').textContent,
-      basicModeValue: document.getElementById('cpu-config-basic-time-budget').value,
+      basicModeSliderValue: document.getElementById('cpu-config-basic-time-budget').value,
+      basicModeValueText: document.getElementById('cpu-config-basic-time-budget-value').textContent,
       advancedLabel: document.getElementById('cpu-config-advanced-mode-btn').textContent,
     }));
     assert(hintConfigBasic.title === 'Configure Hint Helper'
-      && hintConfigBasic.basicModeValue === '1000'
+      && hintConfigBasic.basicModeSliderValue === '19'
+      && hintConfigBasic.basicModeValueText === '1000ms'
       && hintConfigBasic.advancedLabel === 'Advanced Mode',
       `Hint helper uses the same configurable CPU screen in helper mode: ${JSON.stringify(hintConfigBasic)}`);
 
