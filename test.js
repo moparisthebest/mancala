@@ -1502,6 +1502,16 @@ async function runTests() {
     assert(aliceConfigScreen.useParallel && aliceConfigScreen.maxWorkers === '6',
       `Alice config screen exposes parallel defaults: enabled=${aliceConfigScreen.useParallel}, maxWorkers=${aliceConfigScreen.maxWorkers}`);
 
+    const aliceKeyboardFocusPreserved = await pagePVC.evaluate(() => {
+      const input = document.getElementById('cpu-config-time-budget');
+      input.focus();
+      lastViewportKey = 'force-relayout';
+      relayoutForViewportChange();
+      return document.activeElement && document.activeElement.id;
+    });
+    assert(aliceKeyboardFocusPreserved === 'cpu-config-time-budget',
+      `Alice config keeps the focused input active across viewport relayout: "${aliceKeyboardFocusPreserved}"`);
+
     await pagePVC.evaluate(() => {
       document.getElementById('cpu-config-search-mode').value = 'depth';
       document.getElementById('cpu-config-search-mode').dispatchEvent(new Event('change', { bubbles: true }));

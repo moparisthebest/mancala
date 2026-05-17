@@ -2910,6 +2910,14 @@
       contentEl.innerHTML = '<div class="setup-options">' + cards + '</div>';
     }
 
+    function shouldPreserveCpuSetupFocusOnViewportResize() {
+      if (!cpuSetupState.open || cpuSetupState.step !== 'configure-player') return false;
+      const activeEl = document.activeElement;
+      if (!activeEl || typeof activeEl.closest !== 'function') return false;
+      if (!activeEl.closest('#cpu-setup-overlay')) return false;
+      return activeEl.tagName === 'INPUT' || activeEl.tagName === 'SELECT' || activeEl.tagName === 'TEXTAREA';
+    }
+
     function syncCpuTurnScheduling() {
       cancelPendingCpuTurn();
       if (!hotseatMode || !isLocalCpuMode() || !bothJoined() || state.gameOver || animating || menuOpen) return;
@@ -4538,6 +4546,10 @@
       const viewportKey = viewportW + 'x' + viewportH;
       if (viewportKey === lastViewportKey) return;
       lastViewportKey = viewportKey;
+      if (shouldPreserveCpuSetupFocusOnViewportResize()) {
+        if (menuOpen) updateMenuLabels();
+        return;
+      }
       if (animating) applyBoardTransform();
       else render();
       if (menuOpen) updateMenuLabels();
