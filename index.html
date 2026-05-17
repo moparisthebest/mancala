@@ -999,8 +999,8 @@
         <label for="menu-anim-speed">Sow Animation</label>
         <div class="slider-row">
           <span class="slider-label">Off</span>
-          <input type="range" id="menu-anim-speed" min="0" max="100" value="0" oninput="menuAnimSpeedChanged(this.value)">
-          <span class="slider-label">Fast</span>
+          <input type="range" id="menu-anim-speed" min="0" max="2000" step="50" value="0" oninput="menuAnimSpeedChanged(this.value)">
+          <span class="slider-label">Slow</span>
         </div>
         <div class="slider-status" id="menu-anim-status">Off</div>
       </div>
@@ -1104,8 +1104,8 @@
       boardRotation: 'auto',
       // Board scale as a percent of the best-fit size.
       boardSizePercent: 100,
-      // Preferred sow animation speed. 0 disables animations.
-      animSpeed: 67,
+      // Preferred sow animation delay in ms per seed. 0 disables animations.
+      animSpeed: 700,
       // Turn/status HUD visibility.
       showHud: false,
       // Whether the closed-state gear button is shown during gameplay.
@@ -1125,8 +1125,12 @@
 
     function normalizeAnimSpeed(value) {
       const parsed = parseInt(value, 10);
-      if (!Number.isFinite(parsed)) return DEFAULT_LOCAL_SETTINGS.animSpeed; // ~700ms per seed
-      return Math.max(0, Math.min(100, parsed));
+      if (!Number.isFinite(parsed)) return DEFAULT_LOCAL_SETTINGS.animSpeed;
+      if (parsed === 0) return 0;
+      if (parsed > 0 && parsed <= 100 && parsed % 50 !== 0) {
+        return Math.max(50, Math.min(2000, Math.round(legacyAnimSpeedToDelay(parsed) / 50) * 50));
+      }
+      return Math.max(50, Math.min(2000, Math.round(parsed / 50) * 50));
     }
 
     function loadLocalSettingsFromStorage() {
@@ -4649,9 +4653,12 @@
       button.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
     }
 
-    function animSpeedToDelay(speed) {
-      // Map slider 1-100 to delay in ms: 1 = slow (2000ms), 100 = fast (50ms)
+    function legacyAnimSpeedToDelay(speed) {
       return Math.round(2000 - (speed - 1) * (1950 / 99));
+    }
+
+    function animSpeedToDelay(speed) {
+      return speed <= 0 ? 0 : speed;
     }
 
     function updateAnimStatus(val) {

@@ -2157,8 +2157,8 @@ async function runTests() {
       value: document.getElementById('menu-anim-speed').value,
       status: document.getElementById('menu-anim-status').textContent,
     }));
-    assert(defaultAnimMenuState.value === '67',
-      `Animation speed slider defaults to 67 (~700ms): ${defaultAnimMenuState.value}`);
+    assert(defaultAnimMenuState.value === '700',
+      `Animation speed slider defaults to 700ms: ${defaultAnimMenuState.value}`);
     assert(defaultAnimMenuState.status === '700ms per seed',
       `Animation speed status defaults to 700ms per seed: "${defaultAnimMenuState.status}"`);
     await pageMD.close();
@@ -2652,10 +2652,10 @@ async function runTests() {
       sliderDisabled: document.getElementById('menu-anim-speed').disabled,
       status: document.getElementById('menu-anim-status').textContent,
     }));
-    assert(restoredNonZeroAnim.animSpeed === 42, `Returning to marbles restores saved non-zero speed: ${restoredNonZeroAnim.animSpeed}`);
-    assert(restoredNonZeroAnim.sliderValue === '42', `Returning to marbles restores saved non-zero slider value: ${restoredNonZeroAnim.sliderValue}`);
+    assert(restoredNonZeroAnim.animSpeed === 1200, `Returning to marbles restores saved non-zero speed as a 50ms-step delay: ${restoredNonZeroAnim.animSpeed}`);
+    assert(restoredNonZeroAnim.sliderValue === '1200', `Returning to marbles restores saved non-zero slider value as a delay: ${restoredNonZeroAnim.sliderValue}`);
     assert(!restoredNonZeroAnim.sliderDisabled, 'Returning to marbles with saved non-zero speed re-enables animation slider');
-    assert(restoredNonZeroAnim.status === `${Math.round(2000 - (42 - 1) * (1950 / 99))}ms per seed`,
+    assert(restoredNonZeroAnim.status === '1200ms per seed',
       `Returning to marbles restores non-zero animation status text: "${restoredNonZeroAnim.status}"`);
     await pageNR.close();
 
