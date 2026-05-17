@@ -1510,6 +1510,38 @@ async function runTests() {
       `CPU search starts on the next frame while animation is still running: animating=${cpuPresearchState.afterFrameState.animating}, plan=${cpuPresearchState.afterFrameState.pendingCpuTurnPlanExists}, player=${cpuPresearchState.afterFrameState.pendingCpuTurnPlanPlayer}, timer=${cpuPresearchState.afterFrameState.pendingCpuTurnTimerActive}`);
     await pageCpuOverlap.close();
 
+    const pageCpuAnimationBudget = await playerCpuContext.newPage();
+    pageCpuAnimationBudget.on('console', m => console.log(`    [PVC ANIM BUDGET] ${m.text()}`));
+    pageCpuAnimationBudget.on('pageerror', e => console.log(`    [PVC ANIM BUDGET ERROR] ${e.message}`));
+    await configurePageSettings(pageCpuAnimationBudget, { animSpeed: '20' }, { beforeNavigation: true });
+    await pageCpuAnimationBudget.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle0' });
+    const cpuAnimationBudgetState = await pageCpuAnimationBudget.evaluate(async () => {
+      cpuTurnDelayMs = 0;
+      const aliceTemplate = AVAILABLE_PLAYERS.find(p => p.id === 'alice');
+      const extendedAlice = createConfiguredLookaheadPlayer(aliceTemplate, {
+        searchMode: 'time',
+        timeBudgetMs: 50,
+        useParallelWorkers: true,
+        maxWorkers: 4,
+        extendTimeBudgetToAnimation: true,
+      });
+      startLocalModeGame({
+        mode: LOCAL_MODE_TYPES.playerVsCpu,
+        topPlayer: extendedAlice,
+        bottomPlayer: null,
+        startingPlayer: 1,
+      });
+      handlePitClick(1, 0);
+      await new Promise(resolve => requestAnimationFrame(() => resolve()));
+      return {
+        configuredBudgetMs: extendedAlice.solverConfig.timeBudgetMs,
+        presearchBudgetMs: pendingCpuTurnPlan && pendingCpuTurnPlan.presearchConfig ? pendingCpuTurnPlan.presearchConfig.timeBudgetMs : null,
+      };
+    });
+    assert(cpuAnimationBudgetState.presearchBudgetMs > cpuAnimationBudgetState.configuredBudgetMs,
+      `Worker presearch budget can extend to cover a long animation: base=${cpuAnimationBudgetState.configuredBudgetMs}, presearch=${cpuAnimationBudgetState.presearchBudgetMs}`);
+    await pageCpuAnimationBudget.close();
+
     const pageCpuFallback = await playerCpuContext.newPage();
     pageCpuFallback.on('console', m => console.log(`    [PVC FALLBACK] ${m.text()}`));
     pageCpuFallback.on('pageerror', e => console.log(`    [PVC FALLBACK ERROR] ${e.message}`));
@@ -1586,6 +1618,8 @@ async function runTests() {
       timeBudget: document.getElementById('cpu-config-time-budget').value,
       useParallel: document.getElementById('cpu-config-use-parallel').checked,
       maxWorkers: document.getElementById('cpu-config-max-workers').value,
+      extendAnimationBudgetVisible: !!document.getElementById('cpu-config-extend-animation-budget'),
+      extendAnimationBudget: document.getElementById('cpu-config-extend-animation-budget') ? document.getElementById('cpu-config-extend-animation-budget').checked : null,
     }));
     assert(aliceConfigScreen.title === 'Configure Alice', `Alice opens a dedicated config screen: "${aliceConfigScreen.title}"`);
     assert(aliceConfigScreen.subtitle.includes('instance only'), `Alice config subtitle explains instance-only settings: "${aliceConfigScreen.subtitle}"`);
@@ -1594,6 +1628,8 @@ async function runTests() {
       `Alice config screen starts with timed-search defaults: mode=${aliceConfigScreen.searchMode}, budget=${aliceConfigScreen.timeBudget}`);
     assert(aliceConfigScreen.useParallel && aliceConfigScreen.maxWorkers === '6',
       `Alice config screen exposes parallel defaults: enabled=${aliceConfigScreen.useParallel}, maxWorkers=${aliceConfigScreen.maxWorkers}`);
+    assert(aliceConfigScreen.extendAnimationBudgetVisible && aliceConfigScreen.extendAnimationBudget === false,
+      `Alice config screen exposes the animation-aware worker presearch option when workers are available: visible=${aliceConfigScreen.extendAnimationBudgetVisible}, enabled=${aliceConfigScreen.extendAnimationBudget}`);
 
     const aliceKeyboardFocusPreserved = await pagePVC.evaluate(() => {
       const input = document.getElementById('cpu-config-time-budget');
@@ -1614,6 +1650,8 @@ async function runTests() {
       document.getElementById('cpu-config-use-parallel').dispatchEvent(new Event('change', { bubbles: true }));
       document.getElementById('cpu-config-max-workers').value = '2';
       document.getElementById('cpu-config-max-workers').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-extend-animation-budget').checked = true;
+      document.getElementById('cpu-config-extend-animation-budget').dispatchEvent(new Event('change', { bubbles: true }));
       document.getElementById('cpu-config-store').value = '900';
       document.getElementById('cpu-config-store').dispatchEvent(new Event('change', { bubbles: true }));
       document.getElementById('cpu-config-confirm-btn').click();
@@ -1630,6 +1668,7 @@ async function runTests() {
       && aliceStarterScreen.storedDefaults.maxDepth === 6
       && aliceStarterScreen.storedDefaults.useParallelWorkers === false
       && aliceStarterScreen.storedDefaults.maxWorkers === 2
+      && aliceStarterScreen.storedDefaults.extendTimeBudgetToAnimation === true
       && aliceStarterScreen.storedDefaults.storeScoreWeight === 900,
       `Alice config save updates the stored defaults: ${JSON.stringify(aliceStarterScreen.storedDefaults)}`);
 
@@ -1642,12 +1681,14 @@ async function runTests() {
       maxDepth: document.getElementById('cpu-config-max-depth').value,
       useParallel: document.getElementById('cpu-config-use-parallel').checked,
       maxWorkers: document.getElementById('cpu-config-max-workers').value,
+      extendAnimationBudget: document.getElementById('cpu-config-extend-animation-budget').checked,
       storeWeight: document.getElementById('cpu-config-store').value,
     }));
     assert(aliceDefaultsReloaded.searchMode === 'depth'
       && aliceDefaultsReloaded.maxDepth === '6'
       && aliceDefaultsReloaded.useParallel === false
       && aliceDefaultsReloaded.maxWorkers === '2'
+      && aliceDefaultsReloaded.extendAnimationBudget === true
       && aliceDefaultsReloaded.storeWeight === '900',
       `Alice config screen reloads the saved defaults: ${JSON.stringify(aliceDefaultsReloaded)}`);
     await pagePVC.evaluate(() => document.getElementById('cpu-setup-back-btn').click());

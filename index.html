@@ -1569,6 +1569,7 @@
       timeBudgetMs: 1000,
       useParallelWorkers: true,
       maxWorkers: MAX_PARALLEL_LOOKAHEAD_WORKERS,
+      extendTimeBudgetToAnimation: false,
       terminalScoreWeight: LOOKAHEAD_TERMINAL_SCORE_WEIGHT,
       storeScoreWeight: LOOKAHEAD_STORE_SCORE_WEIGHT,
       pitScoreWeight: LOOKAHEAD_PIT_SCORE_WEIGHT,
@@ -1629,6 +1630,7 @@
         timeBudgetMs: normalizeRustLookaheadTimeBudget(raw.timeBudgetMs),
         useParallelWorkers: raw.useParallelWorkers == null ? DEFAULT_LOOKAHEAD_CONFIG.useParallelWorkers : !!raw.useParallelWorkers,
         maxWorkers: normalizeLookaheadParallelWorkerCount(raw.maxWorkers),
+        extendTimeBudgetToAnimation: raw.extendTimeBudgetToAnimation == null ? DEFAULT_LOOKAHEAD_CONFIG.extendTimeBudgetToAnimation : !!raw.extendTimeBudgetToAnimation,
         terminalScoreWeight: normalizeLookaheadWeight(raw.terminalScoreWeight, DEFAULT_LOOKAHEAD_CONFIG.terminalScoreWeight),
         storeScoreWeight: normalizeLookaheadWeight(raw.storeScoreWeight, DEFAULT_LOOKAHEAD_CONFIG.storeScoreWeight),
         pitScoreWeight: normalizeLookaheadWeight(raw.pitScoreWeight, DEFAULT_LOOKAHEAD_CONFIG.pitScoreWeight),
@@ -2190,11 +2192,24 @@
       return typeof Worker === 'function';
     }
 
+    function buildLocalLookaheadPresearchConfig(controller, animationDurationMs) {
+      const normalizedConfig = normalizeRustLookaheadConfig(controller.solverConfig || controller.defaultConfig || DEFAULT_LOOKAHEAD_CONFIG);
+      if (normalizedConfig.searchMode !== 'time' || !normalizedConfig.extendTimeBudgetToAnimation) {
+        return normalizedConfig;
+      }
+      return Object.assign({}, normalizedConfig, {
+        timeBudgetMs: Math.max(normalizedConfig.timeBudgetMs, Math.max(0, Math.ceil(animationDurationMs || 0))),
+      });
+    }
+
     function chooseLookaheadMoveViaWorker(controller, boardState, playerIdx, options) {
       const normalizedOptions = Object.assign({
         fallbackToMainThread: true,
+        configOverride: null,
       }, options);
-      const normalizedConfig = normalizeRustLookaheadConfig(controller.solverConfig || controller.defaultConfig || DEFAULT_LOOKAHEAD_CONFIG);
+      const normalizedConfig = normalizeRustLookaheadConfig(
+        normalizedOptions.configOverride || controller.solverConfig || controller.defaultConfig || DEFAULT_LOOKAHEAD_CONFIG
+      );
       if (!canUseLookaheadMoveWorker()) {
         if (normalizedOptions.fallbackToMainThread) {
           return Promise.resolve(controller.chooseMove(boardState, playerIdx));
@@ -2849,6 +2864,7 @@
         playerIdx: playerIdx,
         controller: controller,
         strategyState: buildCpuStrategyStateFromBoard(strategyState),
+        presearchConfig: normalizedOptions.presearchConfig || null,
         allowMainThreadFallback: normalizedOptions.allowMainThreadFallback,
         suppressWorkerFailureError: normalizedOptions.suppressWorkerFailureError,
         delayScheduled: false,
@@ -2862,6 +2878,7 @@
       const chooseMovePromise = controller && controller.solverKind === 'lookahead'
         ? chooseLookaheadMoveViaWorker(controller, plan.strategyState, playerIdx, {
           fallbackToMainThread: plan.allowMainThreadFallback,
+          configOverride: plan.presearchConfig,
         })
         : Promise.resolve(controller.chooseMove(plan.strategyState, playerIdx));
 
@@ -2887,7 +2904,7 @@
       return plan;
     }
 
-    function primeCpuTurnSearchForState(boardState) {
+    function primeCpuTurnSearchForState(boardState, animationDurationMs) {
       if (!hotseatMode || !isLocalCpuMode() || !bothJoined()) return;
       const strategyState = buildCpuStrategyStateFromBoard(boardState);
       const playerIdx = strategyState.currentPlayer;
@@ -2900,20 +2917,23 @@
         return;
       }
       ensurePendingCpuTurnPlan(strategyState, {
+        presearchConfig: controller.solverKind === 'lookahead'
+          ? buildLocalLookaheadPresearchConfig(controller, animationDurationMs)
+          : null,
         allowMainThreadFallback: false,
         suppressWorkerFailureError: true,
       });
     }
 
-    function scheduleCpuTurnSearchForState(boardState) {
+    function scheduleCpuTurnSearchForState(boardState, animationDurationMs) {
       if (typeof requestAnimationFrame === 'function') {
         requestAnimationFrame(function() {
-          primeCpuTurnSearchForState(boardState);
+          primeCpuTurnSearchForState(boardState, animationDurationMs);
         });
         return;
       }
       setTimeout(function() {
-        primeCpuTurnSearchForState(boardState);
+        primeCpuTurnSearchForState(boardState, animationDurationMs);
       }, 0);
     }
 
@@ -3065,6 +3085,8 @@
       const instanceLabel = cpuSetupState.configuringSlot === 'bottom' ? 'bottom row player' : 'top row player';
       const timeSectionStyle = normalizedConfig.searchMode === 'time' ? '' : ' style="display:none;"';
       const depthSectionStyle = normalizedConfig.searchMode === 'depth' ? '' : ' style="display:none;"';
+      const canShowAnimationBudgetOption = canUseLookaheadMoveWorker();
+      const animationBudgetStyle = normalizedConfig.searchMode === 'time' ? '' : ' style="display:none;"';
 
       return ''
         + '<div class="setup-summary-card">'
@@ -3086,6 +3108,12 @@
         + '<label for="cpu-config-time-budget">Time Budget (ms)</label>'
         + '<input class="setup-input" id="cpu-config-time-budget" type="number" min="0" max="60000" step="1" value="' + normalizedConfig.timeBudgetMs + '" onchange="updateCpuSetupLookaheadConfig(\'timeBudgetMs\', this.value)">'
         + '</div>'
+        + (canShowAnimationBudgetOption
+          ? ('<div class="setup-field"' + animationBudgetStyle + '>'
+            + '<label class="setup-checkbox-row"><input id="cpu-config-extend-animation-budget" type="checkbox" ' + (normalizedConfig.extendTimeBudgetToAnimation ? 'checked ' : '') + 'onchange="toggleCpuSetupLookaheadBoolean(\'extendTimeBudgetToAnimation\', this.checked)"> <span>Let worker presearch use at least the current move animation time</span></label>'
+            + '<p class="setup-helper-text">When a local move animation lasts longer than the normal time budget, keep the background search running until that animation ends.</p>'
+            + '</div>')
+          : '')
         + '<div class="setup-field"' + depthSectionStyle + '>'
         + '<label for="cpu-config-max-depth">Fixed Depth</label>'
         + '<input class="setup-input" id="cpu-config-max-depth" type="number" min="1" max="42" step="1" value="' + normalizedConfig.maxDepth + '" onchange="updateCpuSetupLookaheadConfig(\'maxDepth\', this.value)">'
@@ -3971,7 +3999,8 @@
       if (state.gameOver) return;
       if (state.currentPlayer !== playerIdx) return;
       normalizeStateToCounts();
-      if (state.pits[playerIdx][pitIdx] === 0) return;
+      const movingSeeds = state.pits[playerIdx][pitIdx];
+      if (movingSeeds === 0) return;
       const projectedLocalState = hotseatMode && isLocalCpuMode() ? executeMove(playerIdx, pitIdx) : null;
 
       if (hotseatMode) {
@@ -3981,7 +4010,10 @@
           updateInteractionLockState(-2);
           updateMenuButton();
           if (projectedLocalState) {
-            scheduleCpuTurnSearchForState(projectedLocalState);
+            scheduleCpuTurnSearchForState(
+              projectedLocalState,
+              estimateAnimatedMoveDurationMs(movingSeeds, animSpeedToDelay(animSpeed))
+            );
           }
           const delay = animSpeedToDelay(animSpeed);
           executeMoveAnimated(playerIdx, pitIdx, delay).then(function() {
@@ -4060,6 +4092,17 @@
     function buildSummary() {
       if (!bothJoined()) return 'Waiting for players';
       return playerName(0) + ' ' + state.stores[0] + ' - ' + state.stores[1] + ' ' + playerName(1);
+    }
+
+    function estimateAnimatedMoveDurationMs(seedCount, delay) {
+      const totalSeeds = Math.max(0, Math.floor(Number(seedCount) || 0));
+      if (totalSeeds === 0 || delay <= 0) return 0;
+      const liftDur = Math.min(delay * 0.6, 250);
+      const liftStepDur = Math.max(30, liftDur / totalSeeds);
+      const travelDur = Math.max(delay * 0.55, 80);
+      const dropDur = Math.max(delay * 0.35, 60);
+      const interSeedPause = Math.max(delay * 0.1, 20);
+      return Math.ceil(50 + (totalSeeds * liftStepDur) + 50 + (totalSeeds * (travelDur + dropDur + interSeedPause)));
     }
 
     // =====================================================================
