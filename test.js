@@ -12,6 +12,8 @@ const TEST_DEFAULT_SETTINGS = Object.freeze({
   boardSizePercent: '100',
   showHud: 'false',
   showMenuButton: 'true',
+  hintHelperPlayerId: null,
+  hintHelperConfig: null,
 });
 
 // Simple static file server
@@ -45,6 +47,18 @@ function startServer() {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+async function enterHelpButtonSequence(page, firstStore = 'bottom') {
+  const sequence = firstStore === 'top'
+    ? ['store-top', 'store-bottom', 'store-bottom', 'store-top', 'store-top', 'store-bottom', 'store-bottom', 'store-top']
+    : ['store-bottom', 'store-top', 'store-top', 'store-bottom', 'store-bottom', 'store-top', 'store-top', 'store-bottom'];
+  await page.evaluate((ids) => {
+    ids.forEach((id) => {
+      document.getElementById(id).click();
+    });
+  }, sequence);
+  await sleep(120);
+}
+
 async function configurePageSettings(page, overrides = {}, options = {}) {
   const settings = { ...TEST_DEFAULT_SETTINGS, ...overrides };
   const payload = {
@@ -60,6 +74,8 @@ async function configurePageSettings(page, overrides = {}, options = {}) {
       boardSizePercent: 'mancala-boardSizePercent',
       showHud: 'mancala-showHud',
       showMenuButton: 'mancala-showMenuButton',
+      hintHelperPlayerId: 'mancala-hint-helper-player-id',
+      hintHelperConfig: 'mancala-hint-helper-config',
     };
     const updatesKey = '__xdcUpdatesKey__';
     for (const [name, value] of Object.entries(config.settings)) {
@@ -1832,6 +1848,229 @@ async function runTests() {
     assert(pvcpuAfterBobMove.messages === 0, `Player vs CPU stays local and sends no webxdc updates: ${pvcpuAfterBobMove.messages}`);
     await pagePVC.close();
     await playerCpuContext.close();
+
+    console.log('\n=== Hint helper button: configure, persist, and highlight ===');
+    const hintHelperContext = browser.createBrowserContext
+      ? await browser.createBrowserContext()
+      : await browser.createIncognitoBrowserContext();
+    const pageHintSetup = await hintHelperContext.newPage();
+    pageHintSetup.on('console', m => console.log(`    [HINT SETUP] ${m.text()}`));
+    pageHintSetup.on('pageerror', e => console.log(`    [HINT SETUP ERROR] ${e.message}`));
+    await configurePageSettings(pageHintSetup, {}, { beforeNavigation: true });
+    await pageHintSetup.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle0' });
+    await pageHintSetup.evaluate(() => document.getElementById('hotseat-btn').click());
+    await sleep(150);
+    const hintButtonHiddenState = await pageHintSetup.evaluate(() => {
+      const button = document.getElementById('hint-helper-btn');
+      return {
+        display: getComputedStyle(button).display,
+        text: button.textContent,
+      };
+    });
+    assert(hintButtonHiddenState.display === 'none' && hintButtonHiddenState.text === '?',
+      `Hint helper button stays hidden until the store sequence is entered: ${JSON.stringify(hintButtonHiddenState)}`);
+
+    const hintUnlockProgress = await pageHintSetup.evaluate(() => {
+      document.getElementById('store-bottom').click();
+      const button = document.getElementById('hint-helper-btn');
+      return {
+        displayMode,
+        buttonDisplay: getComputedStyle(button).display,
+      };
+    });
+    assert(hintUnlockProgress.displayMode === 'numbers' && hintUnlockProgress.buttonDisplay === 'none',
+      `Store taps still toggle numbers before help is enabled: ${JSON.stringify(hintUnlockProgress)}`);
+
+    await pageHintSetup.evaluate(() => {
+      ['store-top', 'store-top', 'store-bottom', 'store-bottom', 'store-top', 'store-top', 'store-bottom'].forEach((id) => {
+        document.getElementById(id).click();
+      });
+    });
+    await sleep(150);
+    const hintButtonState = await pageHintSetup.evaluate(() => {
+      const button = document.getElementById('hint-helper-btn');
+      const rect = button.getBoundingClientRect();
+      return {
+        display: getComputedStyle(button).display,
+        text: button.textContent,
+        left: Math.round(rect.left),
+        right: Math.round(window.innerWidth - rect.right),
+        title: button.title,
+        displayMode,
+      };
+    });
+    assert(hintButtonState.display !== 'none' && hintButtonState.text === '?' && hintButtonState.left < hintButtonState.right && hintButtonState.displayMode === 'marbles',
+      `Store sequence enables the help button on the left without breaking display toggling: ${JSON.stringify(hintButtonState)}`);
+
+    await pageHintSetup.evaluate(() => {
+      const button = document.getElementById('hint-helper-btn');
+      button.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true }));
+    });
+    await sleep(600);
+    await pageHintSetup.evaluate(() => {
+      const button = document.getElementById('hint-helper-btn');
+      button.dispatchEvent(new MouseEvent('mouseup', { button: 0, bubbles: true }));
+    });
+    await sleep(150);
+
+    const hintChooserState = await pageHintSetup.evaluate(() => ({
+      open: document.getElementById('cpu-setup-overlay').classList.contains('open'),
+      title: document.getElementById('cpu-setup-title').textContent,
+      subtitle: document.getElementById('cpu-setup-subtitle').textContent,
+    }));
+    assert(hintChooserState.open && hintChooserState.title === 'Choose Hint Helper',
+      `Holding the hint helper button opens the helper chooser: ${JSON.stringify(hintChooserState)}`);
+
+    await pageHintSetup.evaluate(() => document.getElementById('cpu-select-alice').click());
+    await sleep(150);
+    const hintConfigBasic = await pageHintSetup.evaluate(() => ({
+      title: document.getElementById('cpu-setup-title').textContent,
+      basicModeValue: document.getElementById('cpu-config-basic-time-budget').value,
+      advancedLabel: document.getElementById('cpu-config-advanced-mode-btn').textContent,
+    }));
+    assert(hintConfigBasic.title === 'Configure Hint Helper'
+      && hintConfigBasic.basicModeValue === '1000'
+      && hintConfigBasic.advancedLabel === 'Advanced Mode',
+      `Hint helper uses the same configurable CPU screen in helper mode: ${JSON.stringify(hintConfigBasic)}`);
+
+    await pageHintSetup.evaluate(() => {
+      document.getElementById('cpu-config-advanced-mode-btn').click();
+    });
+    await sleep(120);
+    await pageHintSetup.evaluate(() => {
+      document.getElementById('cpu-config-search-mode').value = 'depth';
+      document.getElementById('cpu-config-search-mode').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-max-depth').value = '4';
+      document.getElementById('cpu-config-max-depth').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-confirm-btn').click();
+    });
+    await sleep(150);
+    const hintStorageState = await pageHintSetup.evaluate(() => ({
+      overlayOpen: document.getElementById('cpu-setup-overlay').classList.contains('open'),
+      helperPlayerId: localStorage.getItem('mancala-hint-helper-player-id'),
+      helperConfig: JSON.parse(localStorage.getItem('mancala-hint-helper-config')),
+    }));
+    assert(!hintStorageState.overlayOpen
+      && hintStorageState.helperPlayerId === 'alice'
+      && hintStorageState.helperConfig.searchMode === 'depth'
+      && hintStorageState.helperConfig.maxDepth === 4,
+      `Hint helper selection and config persist globally: ${JSON.stringify(hintStorageState)}`);
+    await pageHintSetup.close();
+
+    const pageHintPlay = await hintHelperContext.newPage();
+    pageHintPlay.on('console', m => console.log(`    [HINT PLAY] ${m.text()}`));
+    pageHintPlay.on('pageerror', e => console.log(`    [HINT PLAY ERROR] ${e.message}`));
+    await pageHintPlay.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle0' });
+    await pageHintPlay.evaluate(() => document.getElementById('hotseat-btn').click());
+    await sleep(150);
+    await enterHelpButtonSequence(pageHintPlay, 'bottom');
+    await pageHintPlay.evaluate(() => {
+      state.pits = [[0, 0, 0, 0, 2, 1], [4, 4, 4, 4, 4, 4]];
+      state.stores = [0, 0];
+      state.currentPlayer = 0;
+      state.gameOver = false;
+      render();
+    });
+    await pageHintPlay.evaluate(() => document.getElementById('hint-helper-btn').click());
+    await pageHintPlay.waitForFunction(() => document.querySelectorAll('.pit.hint-suggestion').length === 1, { timeout: 15000 });
+    const hintedMoveState = await pageHintPlay.evaluate(() => {
+      const highlighted = Array.from(document.querySelectorAll('.pit.hint-suggestion'));
+      const topPits = Array.from(document.querySelectorAll('#top-row .pit'));
+      const bottomPits = Array.from(document.querySelectorAll('#bottom-row .pit'));
+      return {
+        highlightedCount: highlighted.length,
+        topHintDomIndex: highlighted.length > 0 ? topPits.indexOf(highlighted[0]) : -1,
+        bottomHintDomIndex: highlighted.length > 0 ? bottomPits.indexOf(highlighted[0]) : -1,
+        buttonTitle: document.getElementById('hint-helper-btn').title,
+        buttonActive: document.getElementById('hint-helper-btn').classList.contains('active'),
+      };
+    });
+    assert(hintedMoveState.highlightedCount === 1
+      && hintedMoveState.topHintDomIndex === 0
+      && hintedMoveState.bottomHintDomIndex === -1
+      && hintedMoveState.buttonActive,
+      `Tapping the saved hint helper highlights Alice's suggested move for the current turn: ${JSON.stringify(hintedMoveState)}`);
+    await pageHintPlay.evaluate(() => {
+      state.gameOver = true;
+      render();
+    });
+    const hintHiddenAtGameOver = await pageHintPlay.evaluate(() => ({
+      display: getComputedStyle(document.getElementById('hint-helper-btn')).display,
+      gameOver: state.gameOver,
+    }));
+    assert(hintHiddenAtGameOver.display === 'none' && hintHiddenAtGameOver.gameOver,
+      `Help button disappears when the game ends: ${JSON.stringify(hintHiddenAtGameOver)}`);
+    await pageHintPlay.evaluate(() => newGame());
+    await sleep(150);
+    const hintHiddenNextGame = await pageHintPlay.evaluate(() => ({
+      display: getComputedStyle(document.getElementById('hint-helper-btn')).display,
+      gameOver: state.gameOver,
+      stores: [...state.stores],
+    }));
+    assert(hintHiddenNextGame.display === 'none' && !hintHiddenNextGame.gameOver && hintHiddenNextGame.stores[0] === 0 && hintHiddenNextGame.stores[1] === 0,
+      `Help button resets hidden for the next game: ${JSON.stringify(hintHiddenNextGame)}`);
+    await pageHintPlay.close();
+
+    const pageHintThinking = await hintHelperContext.newPage();
+    pageHintThinking.on('console', m => console.log(`    [HINT THINKING] ${m.text()}`));
+    pageHintThinking.on('pageerror', e => console.log(`    [HINT THINKING ERROR] ${e.message}`));
+    await configurePageSettings(pageHintThinking, {
+      hintHelperPlayerId: 'wasm-lookahead',
+      hintHelperConfig: JSON.stringify({
+        searchMode: 'time',
+        timeBudgetMs: 1000,
+        useParallelWorkers: false,
+        maxWorkers: 1,
+        extendTimeBudgetToAnimation: false,
+      }),
+    }, { beforeNavigation: true });
+    await pageHintThinking.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle0' });
+    await pageHintThinking.waitForFunction(() => window.wasmPlayersLoadState === 'ready', { timeout: 15000 });
+    await pageHintThinking.evaluate(() => document.getElementById('hotseat-btn').click());
+    await sleep(150);
+    await enterHelpButtonSequence(pageHintThinking, 'bottom');
+    await pageHintThinking.evaluate(() => {
+      state.pits = [[4, 4, 4, 4, 4, 4], [4, 4, 4, 4, 4, 4]];
+      state.stores = [0, 0];
+      state.currentPlayer = 0;
+      state.gameOver = false;
+      render();
+      const baseResolveHintHelperController = resolveHintHelperController;
+      window.__resolveHintHelperControllerForTest = baseResolveHintHelperController;
+      resolveHintHelperController = function() {
+        const helper = baseResolveHintHelperController();
+        if (!helper) return helper;
+        return Object.assign({}, helper, {
+          chooseMove(boardState, playerIdx) {
+            const start = Date.now();
+            while (Date.now() - start < 250) {}
+            return helper.chooseMove(boardState, playerIdx);
+          },
+        });
+      };
+    });
+    const hintThinkingState = await pageHintThinking.evaluate(() => {
+      document.getElementById('hint-helper-btn').click();
+      const button = document.getElementById('hint-helper-btn');
+      return {
+        pending: button.classList.contains('pending'),
+        active: button.classList.contains('active'),
+        title: button.title,
+        highlightedCount: document.querySelectorAll('.pit.hint-suggestion').length,
+      };
+    });
+    assert(hintThinkingState.pending && !hintThinkingState.active && hintThinkingState.highlightedCount === 0 && hintThinkingState.title.includes('thinking'),
+      `Slow hint helpers show an immediate thinking state before the move highlight appears: ${JSON.stringify(hintThinkingState)}`);
+    await pageHintThinking.waitForFunction(() => document.querySelectorAll('.pit.hint-suggestion').length === 1, { timeout: 15000 });
+    const hintThinkingResolved = await pageHintThinking.evaluate(() => ({
+      pending: document.getElementById('hint-helper-btn').classList.contains('pending'),
+      active: document.getElementById('hint-helper-btn').classList.contains('active'),
+      highlightedCount: document.querySelectorAll('.pit.hint-suggestion').length,
+    }));
+    assert(!hintThinkingResolved.pending && hintThinkingResolved.active && hintThinkingResolved.highlightedCount === 1,
+      `Thinking state clears once the helper finishes and the hint is shown: ${JSON.stringify(hintThinkingResolved)}`);
+    await pageHintThinking.close();
+    await hintHelperContext.close();
 
     console.log('\n=== CPU vs CPU: per-instance solver config ===');
     const cpuConfigContext = browser.createBrowserContext

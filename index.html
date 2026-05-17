@@ -130,11 +130,14 @@
       position: relative;
     }
 
-    #menu-open-btn {
+    #menu-open-btn,
+    #hint-helper-btn {
       position: fixed;
       top: 10px;
-      right: 10px;
       z-index: 70;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       width: 34px;
       height: 34px;
       padding: 0;
@@ -147,17 +150,69 @@
       line-height: 1;
       cursor: pointer;
       opacity: 0.78;
-      transition: opacity 0.2s, background 0.2s;
+      overflow: visible;
+      transition: opacity 0.2s, background 0.2s, box-shadow 0.2s;
     }
 
-    #menu-open-btn:hover {
+    #menu-open-btn {
+      right: 10px;
+    }
+
+    #hint-helper-btn {
+      left: 10px;
+    }
+
+    #menu-open-btn:hover,
+    #hint-helper-btn:hover {
       opacity: 1;
       background: rgba(17, 24, 39, 0.9);
     }
 
-    #menu-open-btn:disabled {
+    #menu-open-btn:disabled,
+    #hint-helper-btn:disabled {
       cursor: not-allowed;
       opacity: 0.42;
+    }
+
+    #hint-helper-btn.active {
+      opacity: 1;
+      background: rgba(52, 152, 219, 0.85);
+    }
+
+    #hint-helper-btn.pending {
+      opacity: 1;
+      background: rgba(52, 152, 219, 0.85);
+      box-shadow: 0 0 0 0 rgba(52, 152, 219, 0.6);
+      animation: hint-helper-pulse 1s ease-out infinite;
+    }
+
+    #hint-helper-btn::after {
+      content: '';
+      position: absolute;
+      inset: -5px;
+      border-radius: 50%;
+      border: 2px solid rgba(236, 240, 241, 0.22);
+      border-top-color: rgba(236, 240, 241, 0.98);
+      border-right-color: rgba(236, 240, 241, 0.98);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease;
+    }
+
+    #hint-helper-btn.pending::after {
+      opacity: 1;
+      animation: hint-helper-spin 0.75s linear infinite;
+    }
+
+    @keyframes hint-helper-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes hint-helper-pulse {
+      0% { box-shadow: 0 0 0 0 rgba(52, 152, 219, 0.6); }
+      70% { box-shadow: 0 0 0 8px rgba(52, 152, 219, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(52, 152, 219, 0); }
     }
 
     #board-frame {
@@ -289,6 +344,11 @@
     .pit.locked:active {
       transform: none;
       box-shadow: none;
+    }
+
+    .pit.hint-suggestion {
+      box-shadow: 0 0 0 min(4px, 0.65vmin) rgba(52, 152, 219, 0.95), 0 0 16px rgba(52, 152, 219, 0.7);
+      transform: scale(1.04);
     }
 
     .pit.empty { opacity: 0.4; }
@@ -954,6 +1014,7 @@
   </div>
 
   <button id="menu-open-btn" onclick="toggleMenuButton()" style="display:none;" aria-label="Open menu" title="Open menu">⚙</button>
+  <button id="hint-helper-btn" style="display:none;" aria-label="Hint helper" title="Hint helper">?</button>
 
   <!-- Game Screen -->
   <div id="game-screen">
@@ -1208,6 +1269,7 @@
       animating = false;
       pendingMoveQueue = [];
       pendingMenuMoveQueue = [];
+      resetHelpButtonAccessForGame();
     }
 
     // Simple seeded PRNG (mulberry32) — deterministic from a 32-bit seed
@@ -1598,6 +1660,9 @@
     const BASIC_LOOKAHEAD_MIN_TIME_BUDGET_MS = 50;
     const BASIC_LOOKAHEAD_MAX_TIME_BUDGET_MS = 15000;
     const BASIC_LOOKAHEAD_TIME_STEP_MS = 50;
+    const CPU_SETUP_HINT_MODE = 'hint-helper';
+    const HELP_BUTTON_PATTERN = 'abbaabba';
+    const HELP_BUTTON_PATTERN_WINDOW_MS = 5000;
     const DEFAULT_LOOKAHEAD_CONFIG = Object.freeze({
       searchMode: 'time',
       maxDepth: DEFAULT_LOOKAHEAD_DEPTH,
@@ -1616,11 +1681,23 @@
       alice: 'mancala-lookahead-default-alice',
       'wasm-lookahead': 'mancala-lookahead-default-wasm-lookahead',
     });
+    const HINT_HELPER_STORAGE_KEYS = Object.freeze({
+      playerId: 'mancala-hint-helper-player-id',
+      config: 'mancala-hint-helper-config',
+    });
     let wasmPlayersLoadState = 'idle';
     let wasmPlayersLoadError = '';
     let wasmCpuEnginePromise = null;
     let wasmCpuEngineExports = null;
     let parallelLookaheadRequestId = 1;
+    let hintHelperSelection = null;
+    let hintSuggestion = null;
+    let hintSuggestionRequestToken = 0;
+    let hintSuggestionPending = false;
+    let hintButtonLongPressTimer = null;
+    let hintButtonLongPressTriggered = false;
+    let helpButtonEnabledForGame = false;
+    let helpButtonTapHistory = [];
 
     function updateWasmPlayersLoadState(state, error) {
       wasmPlayersLoadState = state;
@@ -1700,6 +1777,54 @@
       return 'Impossible';
     }
 
+    function resetHelpButtonAccessForGame() {
+      helpButtonEnabledForGame = false;
+      helpButtonTapHistory = [];
+    }
+
+    function matchesHelpButtonPattern(tapHistory) {
+      if (tapHistory.length < HELP_BUTTON_PATTERN.length) return false;
+      const recentTaps = tapHistory.slice(-HELP_BUTTON_PATTERN.length);
+      if (recentTaps[recentTaps.length - 1].at - recentTaps[0].at > HELP_BUTTON_PATTERN_WINDOW_MS) return false;
+      const firstStore = recentTaps[0].storeKey;
+      let secondStore = null;
+      for (let i = 0; i < HELP_BUTTON_PATTERN.length; i++) {
+        const expected = HELP_BUTTON_PATTERN[i];
+        if (expected === 'a') {
+          if (recentTaps[i].storeKey !== firstStore) return false;
+          continue;
+        }
+        if (secondStore == null) {
+          secondStore = recentTaps[i].storeKey;
+          if (secondStore === firstStore) return false;
+        }
+        if (recentTaps[i].storeKey !== secondStore) return false;
+      }
+      return secondStore != null;
+    }
+
+    function trackHelpButtonStoreTap(storeKey) {
+      if (helpButtonEnabledForGame) return;
+      const now = Date.now();
+      helpButtonTapHistory = helpButtonTapHistory.filter(function(entry) {
+        return now - entry.at <= HELP_BUTTON_PATTERN_WINDOW_MS;
+      });
+      helpButtonTapHistory.push({ storeKey, at: now });
+      if (helpButtonTapHistory.length > HELP_BUTTON_PATTERN.length) {
+        helpButtonTapHistory = helpButtonTapHistory.slice(-HELP_BUTTON_PATTERN.length);
+      }
+      if (matchesHelpButtonPattern(helpButtonTapHistory)) {
+        helpButtonEnabledForGame = true;
+        helpButtonTapHistory = [];
+      }
+    }
+
+    function handleStoreTap(storeKey) {
+      if (longPressTriggered) return;
+      trackHelpButtonStoreTap(storeKey);
+      toggleDisplayMode();
+    }
+
     function encodeLookaheadConfigForSolver(config) {
       return [
         config.terminalScoreWeight,
@@ -1727,6 +1852,50 @@
 
     function saveLookaheadPlayerDefaults(playerId, config) {
       localStorage.setItem(getLookaheadDefaultsStorageKey(playerId), JSON.stringify(normalizeRustLookaheadConfig(config)));
+    }
+
+    function loadHintHelperSelectionFromStorage() {
+      const playerId = localStorage.getItem(HINT_HELPER_STORAGE_KEYS.playerId);
+      if (!playerId) return null;
+      const rawConfig = localStorage.getItem(HINT_HELPER_STORAGE_KEYS.config);
+      let config = null;
+      if (rawConfig) {
+        try {
+          config = normalizeRustLookaheadConfig(JSON.parse(rawConfig));
+        } catch (err) {
+          config = null;
+        }
+      }
+      return {
+        playerId,
+        config,
+      };
+    }
+
+    function saveHintHelperSelectionToStorage(selection) {
+      if (!selection || !selection.playerId) {
+        localStorage.removeItem(HINT_HELPER_STORAGE_KEYS.playerId);
+        localStorage.removeItem(HINT_HELPER_STORAGE_KEYS.config);
+        hintHelperSelection = null;
+        return;
+      }
+      localStorage.setItem(HINT_HELPER_STORAGE_KEYS.playerId, selection.playerId);
+      if (selection.config) {
+        localStorage.setItem(HINT_HELPER_STORAGE_KEYS.config, JSON.stringify(normalizeRustLookaheadConfig(selection.config)));
+      } else {
+        localStorage.removeItem(HINT_HELPER_STORAGE_KEYS.config);
+      }
+      hintHelperSelection = {
+        playerId: selection.playerId,
+        config: selection.config ? normalizeRustLookaheadConfig(selection.config) : null,
+      };
+    }
+
+    function getHintHelperPlayerConfig(playerId) {
+      if (hintHelperSelection && hintHelperSelection.playerId === playerId && hintHelperSelection.config) {
+        return hintHelperSelection.config;
+      }
+      return loadLookaheadPlayerDefaults(playerId);
     }
 
     function encodeBoardStateForSolver(boardState, playerIdx) {
@@ -2686,6 +2855,7 @@
       };
     }
 
+    hintHelperSelection = loadHintHelperSelectionFromStorage();
     let localModeType = null;
     let localAutomatedPlayers = [null, null];
     let cpuSetupState = createDefaultCpuSetupState();
@@ -2717,6 +2887,8 @@
 
     function resetLocalModeState() {
       cancelPendingCpuTurn();
+      clearHintSuggestion();
+      resetHelpButtonAccessForGame();
       hotseatMode = false;
       localModeType = null;
       localAutomatedPlayers = [null, null];
@@ -2772,11 +2944,29 @@
       });
     }
 
+    function resolveHintHelperController() {
+      if (!hintHelperSelection || !hintHelperSelection.playerId) return null;
+      const player = getAvailablePlayerById(hintHelperSelection.playerId);
+      if (!player) return null;
+      if (isConfigurableLookaheadPlayer(player)) {
+        return createConfiguredLookaheadPlayer(player, hintHelperSelection.config || DEFAULT_LOOKAHEAD_CONFIG);
+      }
+      return player;
+    }
+
+    function saveHintHelperSelection(player, config) {
+      saveHintHelperSelectionToStorage({
+        playerId: player.id,
+        config: isConfigurableLookaheadPlayer(player) ? normalizeRustLookaheadConfig(config || DEFAULT_LOOKAHEAD_CONFIG) : null,
+      });
+    }
+
     function getCpuSetupPlayerForSlot(slot) {
       return slot === 'bottom' ? cpuSetupState.selectedBottomPlayer : cpuSetupState.selectedTopPlayer;
     }
 
     function getCpuSetupSelectionSlot() {
+      if (cpuSetupState.mode === CPU_SETUP_HINT_MODE) return 'hint';
       if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) return 'top';
       return cpuSetupState.step === 'pick-player2' ? 'bottom' : 'top';
     }
@@ -2786,7 +2976,9 @@
       cpuSetupState.step = 'configure-player';
       cpuSetupState.configuringPlayerId = player.id;
       cpuSetupState.configuringSlot = slot;
-      cpuSetupState.draftLookaheadConfig = loadLookaheadPlayerDefaults(player.id);
+      cpuSetupState.draftLookaheadConfig = cpuSetupState.mode === CPU_SETUP_HINT_MODE
+        ? getHintHelperPlayerConfig(player.id)
+        : loadLookaheadPlayerDefaults(player.id);
       cpuSetupState.lookaheadUiMode = 'basic';
       cpuSetupState.expandedPlayerId = null;
       renderCpuSetup();
@@ -2839,6 +3031,12 @@
     }
 
     function applySelectedCpuSetupPlayer(player) {
+      if (cpuSetupState.mode === CPU_SETUP_HINT_MODE) {
+        saveHintHelperSelection(player, null);
+        closeCpuSetup();
+        render();
+        return;
+      }
       if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) {
         cpuSetupState.selectedTopPlayer = player;
         cpuSetupState.step = 'pick-starter';
@@ -2880,6 +3078,12 @@
       const normalizedConfig = cpuSetupState.lookaheadUiMode === 'advanced'
         ? normalizeRustLookaheadConfig(cpuSetupState.draftLookaheadConfig)
         : normalizeBasicLookaheadConfig(cpuSetupState.draftLookaheadConfig);
+      if (cpuSetupState.mode === CPU_SETUP_HINT_MODE) {
+        saveHintHelperSelection(player, normalizedConfig);
+        closeCpuSetup();
+        render();
+        return;
+      }
       saveLookaheadPlayerDefaults(player.id, normalizedConfig);
       applySelectedCpuSetupPlayer(createConfiguredLookaheadPlayer(player, normalizedConfig));
     }
@@ -2907,6 +3111,106 @@
         strategyState.pits[0].join(','),
         strategyState.pits[1].join(','),
       ].join('|');
+    }
+
+    function getHintSuggestionForCurrentState() {
+      if (!hintSuggestion || !bothJoined() || state.gameOver) return null;
+      const strategyState = buildCpuStrategyState();
+      const key = buildCpuTurnKey(strategyState);
+      if (hintSuggestion.key !== key || hintSuggestion.playerIdx !== strategyState.currentPlayer) return null;
+      return hintSuggestion;
+    }
+
+    function clearHintSuggestion() {
+      hintSuggestionRequestToken++;
+      hintSuggestionPending = false;
+      hintSuggestion = null;
+    }
+
+    function canShowHintHelperButton(myIdx) {
+      const gameVisible = document.getElementById('game-screen').style.display === 'block';
+      if (!gameVisible || !bothJoined() || state.gameOver || !helpButtonEnabledForGame) return false;
+      if (hotseatMode) return localModeType !== LOCAL_MODE_TYPES.cpuVsCpu;
+      return myIdx >= 0;
+    }
+
+    function canRequestHintForCurrentTurn(myIdx) {
+      if (!canShowHintHelperButton(myIdx) || animating || state.gameOver) return false;
+      if (hotseatMode) {
+        if (localModeType === LOCAL_MODE_TYPES.cpuVsCpu) return false;
+        if (localModeType === LOCAL_MODE_TYPES.playerVsCpu) return state.currentPlayer === 1;
+        return true;
+      }
+      return myIdx >= 0 && state.currentPlayer === myIdx;
+    }
+
+    function updateHintHelperButton(myIdx) {
+      const button = document.getElementById('hint-helper-btn');
+      if (!button) return;
+      const helper = resolveHintHelperController();
+      const activeHint = getHintSuggestionForCurrentState();
+      const shouldShow = canShowHintHelperButton(myIdx);
+      const helperName = helper ? helper.name : 'hint helper';
+      button.style.display = shouldShow ? '' : 'none';
+      button.classList.toggle('active', !!activeHint);
+      button.classList.toggle('pending', hintSuggestionPending);
+      button.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
+      button.setAttribute('aria-label', hintSuggestionPending
+        ? ('Waiting for ' + helperName + ' hint')
+        : (helper ? ('Ask ' + helper.name + ' for a hint') : 'Choose hint helper'));
+      button.title = hintSuggestionPending
+        ? (helperName + ' is thinking...')
+        : (helper
+          ? ('Tap for a hint from ' + helperName + '. Hold to change helper.')
+          : 'Tap or hold to choose a hint helper.');
+      button.style.zIndex = cpuSetupState.open ? '120' : '70';
+    }
+
+    function requestHintSuggestion() {
+      if (animating) return;
+      const myIdx = hotseatMode ? -2 : getMyPlayerIndex();
+      const helper = resolveHintHelperController();
+      if (!helper) {
+        openHintHelperSetup();
+        return;
+      }
+      if (!canRequestHintForCurrentTurn(myIdx) || hintSuggestionPending) return;
+
+      const strategyState = buildCpuStrategyState();
+      const playerIdx = strategyState.currentPlayer;
+      const key = buildCpuTurnKey(strategyState);
+      const requestToken = ++hintSuggestionRequestToken;
+      hintSuggestionPending = true;
+      updateHintHelperButton(myIdx);
+      const runHintSearch = function() {
+        if (requestToken !== hintSuggestionRequestToken) return;
+        Promise.resolve(helper.chooseMove(strategyState, playerIdx))
+          .then(function(pitIdx) {
+            if (requestToken !== hintSuggestionRequestToken) return;
+            hintSuggestionPending = false;
+            if (!Number.isInteger(pitIdx) || pitIdx < 0 || pitIdx >= PITS) {
+              render();
+              return;
+            }
+            hintSuggestion = { key, playerIdx, pitIdx };
+            render();
+          })
+          .catch(function(err) {
+            if (requestToken !== hintSuggestionRequestToken) return;
+            hintSuggestionPending = false;
+            render();
+            console.error('Hint helper failed:', err);
+            setTimeout(function() { throw err; });
+          });
+      };
+
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(function() {
+          setTimeout(runHintSearch, 0);
+        });
+        return;
+      }
+      setTimeout(runHintSearch, 0);
     }
 
     function maybeCommitPendingCpuTurn() {
@@ -3053,6 +3357,17 @@
       renderCpuSetup();
     }
 
+    function openHintHelperSetup() {
+      if (animating) return;
+      clearHintSuggestion();
+      cpuSetupState = createDefaultCpuSetupState();
+      cpuSetupState.open = true;
+      cpuSetupState.mode = CPU_SETUP_HINT_MODE;
+      cpuSetupState.step = 'pick-helper';
+      cpuSetupState.expandedPlayerId = hintHelperSelection ? hintHelperSelection.playerId : null;
+      renderCpuSetup();
+    }
+
     function closeCpuSetup() {
       resetCpuSetupState();
       renderCpuSetup();
@@ -3061,9 +3376,11 @@
     function cpuSetupBack() {
       if (!cpuSetupState.open) return;
       if (cpuSetupState.step === 'configure-player') {
-        cpuSetupState.step = cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu
-          ? 'pick-opponent'
-          : (cpuSetupState.configuringSlot === 'bottom' ? 'pick-player2' : 'pick-player1');
+        cpuSetupState.step = cpuSetupState.mode === CPU_SETUP_HINT_MODE
+          ? 'pick-helper'
+          : (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu
+            ? 'pick-opponent'
+            : (cpuSetupState.configuringSlot === 'bottom' ? 'pick-player2' : 'pick-player1'));
         cpuSetupState.configuringPlayerId = null;
         cpuSetupState.configuringSlot = null;
         cpuSetupState.draftLookaheadConfig = null;
@@ -3106,6 +3423,7 @@
 
       resetLocalModeState();
       resetCpuSetupState();
+      clearHintSuggestion();
       renderCpuSetup();
 
       hotseatMode = true;
@@ -3150,8 +3468,12 @@
     function getCpuSetupTitle() {
       if (cpuSetupState.step === 'configure-player') {
         const player = getAvailablePlayerById(cpuSetupState.configuringPlayerId);
+        if (cpuSetupState.mode === CPU_SETUP_HINT_MODE) {
+          return 'Configure Hint Helper';
+        }
         return 'Configure ' + (player ? player.name : 'Solver');
       }
+      if (cpuSetupState.mode === CPU_SETUP_HINT_MODE) return 'Choose Hint Helper';
       if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) {
         return cpuSetupState.step === 'pick-starter' ? 'Who Goes First?' : 'Choose Opponent';
       }
@@ -3161,7 +3483,13 @@
     function getCpuSetupSubtitle() {
       if (cpuSetupState.step === 'configure-player') {
         const player = getAvailablePlayerById(cpuSetupState.configuringPlayerId);
+        if (cpuSetupState.mode === CPU_SETUP_HINT_MODE) {
+          return 'Choose how ' + (player ? player.name : 'this helper') + ' should think. Tapping the ? button on your turn will highlight the move this helper would choose. Saving updates your helper globally.';
+        }
         return (player ? player.name : 'This solver') + ' uses these settings for this instance only. Saving also updates the defaults for the next time you choose this solver.';
+      }
+      if (cpuSetupState.mode === CPU_SETUP_HINT_MODE) {
+        return 'Pick a persistent helper bot. Hold the ? button any time to change it, or tap the ? button on your turn to highlight the move it recommends.';
       }
       if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) {
         if (cpuSetupState.step === 'pick-starter') {
@@ -3180,7 +3508,9 @@
     function renderBasicLookaheadConfigForm(player, config) {
       const normalizedConfig = normalizeBasicLookaheadConfig(config);
       const implementationLabel = player.engineKind === 'rust' ? 'Rust/WASM' : 'JavaScript';
-      const instanceLabel = cpuSetupState.configuringSlot === 'bottom' ? 'bottom row player' : 'top row player';
+      const instanceLabel = cpuSetupState.configuringSlot === 'hint'
+        ? 'hint helper'
+        : (cpuSetupState.configuringSlot === 'bottom' ? 'bottom row player' : 'top row player');
       const canShowAnimationBudgetOption = canUseLookaheadMoveWorker();
       const difficultyLabel = getBasicLookaheadDifficultyLabel(normalizedConfig.timeBudgetMs);
 
@@ -3217,7 +3547,9 @@
     function renderAdvancedLookaheadConfigForm(player, config) {
       const normalizedConfig = normalizeRustLookaheadConfig(config);
       const implementationLabel = player.engineKind === 'rust' ? 'Rust/WASM' : 'JavaScript';
-      const instanceLabel = cpuSetupState.configuringSlot === 'bottom' ? 'bottom row player' : 'top row player';
+      const instanceLabel = cpuSetupState.configuringSlot === 'hint'
+        ? 'hint helper'
+        : (cpuSetupState.configuringSlot === 'bottom' ? 'bottom row player' : 'top row player');
       const timeSectionStyle = normalizedConfig.searchMode === 'time' ? '' : ' style="display:none;"';
       const depthSectionStyle = normalizedConfig.searchMode === 'depth' ? '' : ' style="display:none;"';
       const canShowAnimationBudgetOption = canUseLookaheadMoveWorker();
@@ -3306,7 +3638,7 @@
       overlay.classList.add('open');
       titleEl.textContent = getCpuSetupTitle();
       subtitleEl.textContent = getCpuSetupSubtitle();
-      backBtn.style.visibility = cpuSetupState.step === 'pick-opponent' || cpuSetupState.step === 'pick-player1'
+      backBtn.style.visibility = cpuSetupState.step === 'pick-opponent' || cpuSetupState.step === 'pick-player1' || cpuSetupState.step === 'pick-helper'
         ? 'hidden'
         : 'visible';
 
@@ -3438,11 +3770,13 @@
         }
 
         case 'move': {
+          clearHintSuggestion();
           applyAuthoritativeMovePayload(payload);
           break;
         }
 
         case 'newgame': {
+          clearHintSuggestion();
           resetTransientRemoteGameState();
           pendingQuitDialog = false;
           state = initState();
@@ -3454,6 +3788,7 @@
         }
 
         case 'quit': {
+          clearHintSuggestion();
           const quitterAddr = payload.addr;
           const myAddr = getWebxdcSelfAddr();
           const wasOpponent = quitterAddr !== myAddr;
@@ -4231,6 +4566,7 @@
     function startHotseat() {
       closeCpuSetup();
       resetLocalModeState();
+      clearHintSuggestion();
       hotseatMode = true;
       localModeType = LOCAL_MODE_TYPES.hotseat;
       state = initState();
@@ -4252,6 +4588,7 @@
       if (hotseatMode) {
         if (animSpeed > 0) {
           // Animated sowing — blocks further input until done
+          clearHintSuggestion();
           animating = true;
           updateInteractionLockState(-2);
           updateMenuButton();
@@ -4272,6 +4609,7 @@
           });
         } else {
           // Instant move
+          clearHintSuggestion();
           if (projectedLocalState) {
             primeCpuTurnSearchForState(projectedLocalState);
           }
@@ -4287,6 +4625,7 @@
 
       // Online mode: compute result and send it. Animation happens when the
       // update comes back through the listener (for both sender and receiver).
+      clearHintSuggestion();
       const result = executeMove(playerIdx, pitIdx);
 
       const p1name = playerName(0);
@@ -4370,6 +4709,7 @@
       if (!bothJoined()) {
         syncCpuTurnScheduling();
         renderJoinScreen();
+        updateHintHelperButton(-1);
         return;
       }
 
@@ -4388,6 +4728,7 @@
       renderActions(myIdx);
       renderBoard(myIdx);
       updateMenuButton();
+      updateHintHelperButton(myIdx);
       syncCpuTurnScheduling();
     }
 
@@ -4545,6 +4886,7 @@
       cpuVsCpuBtn.style.display = canStartLocalModes ? '' : 'none';
 
       updateMenuButton();
+      updateHintHelperButton(-1);
       renderCpuSetup();
     }
 
@@ -4553,6 +4895,7 @@
       normalizeStateToCounts();
       const bottomIdx = hotseatMode ? 1 : (myIdx >= 0 ? myIdx : 0);
       const topIdx = 1 - bottomIdx;
+      const activeHint = getHintSuggestionForCurrentState();
 
       const topRow = document.getElementById('top-row');
       const bottomRow = document.getElementById('bottom-row');
@@ -4628,8 +4971,8 @@
       storeTop.className = 'store theirs';
       storeBottom.className = 'store mine';
 
-      storeTop.onclick = function() { if (!longPressTriggered) toggleDisplayMode(); };
-      storeBottom.onclick = function() { if (!longPressTriggered) toggleDisplayMode(); };
+      storeTop.onclick = function() { handleStoreTap('top'); };
+      storeBottom.onclick = function() { handleStoreTap('bottom'); };
       updateInteractionLockState(myIdx);
       applyBoardTransform();
     }
@@ -4649,6 +4992,7 @@
       if (board) board.classList.toggle('input-locked', animating);
 
       const perspective = getBoardPerspective(myIdx);
+      const activeHint = getHintSuggestionForCurrentState();
       document.querySelectorAll('#top-row .pit').forEach(function(pit, domIdx) {
         const pitIdx = PITS - 1 - domIdx;
         const isClickable = canClickPit(perspective.topIdx, pitIdx, myIdx);
@@ -4661,6 +5005,7 @@
           pit.classList.add('disabled');
           pit.onclick = null;
         }
+        pit.classList.toggle('hint-suggestion', !!activeHint && activeHint.playerIdx === perspective.topIdx && activeHint.pitIdx === pitIdx);
       });
       document.querySelectorAll('#bottom-row .pit').forEach(function(pit, domIdx) {
         const pitIdx = domIdx;
@@ -4674,6 +5019,7 @@
           pit.classList.add('disabled');
           pit.onclick = null;
         }
+        pit.classList.toggle('hint-suggestion', !!activeHint && activeHint.playerIdx === perspective.bottomIdx && activeHint.pitIdx === pitIdx);
       });
 
       const storeTop = document.getElementById('store-top');
@@ -5097,6 +5443,59 @@
       });
     }
 
+    function handleHintHelperButtonTap() {
+      if (hintButtonLongPressTriggered) {
+        hintButtonLongPressTriggered = false;
+        return;
+      }
+      requestHintSuggestion();
+    }
+
+    function setupHintHelperButtonEvents(buttonEl) {
+      if (!buttonEl) return;
+      buttonEl.addEventListener('click', handleHintHelperButtonTap);
+
+      buttonEl.addEventListener('touchstart', function() {
+        hintButtonLongPressTriggered = false;
+        hintButtonLongPressTimer = setTimeout(function() {
+          hintButtonLongPressTriggered = true;
+          openHintHelperSetup();
+        }, LONG_PRESS_MS);
+      }, { passive: true });
+
+      buttonEl.addEventListener('touchend', function(e) {
+        clearTimeout(hintButtonLongPressTimer);
+        if (hintButtonLongPressTriggered) {
+          e.preventDefault();
+        }
+      });
+
+      buttonEl.addEventListener('touchmove', function() {
+        clearTimeout(hintButtonLongPressTimer);
+      }, { passive: true });
+
+      buttonEl.addEventListener('touchcancel', function() {
+        clearTimeout(hintButtonLongPressTimer);
+      }, { passive: true });
+
+      buttonEl.addEventListener('mousedown', function(e) {
+        if (e.button !== 0) return;
+        hintButtonLongPressTriggered = false;
+        hintButtonLongPressTimer = setTimeout(function() {
+          hintButtonLongPressTriggered = true;
+          openHintHelperSetup();
+        }, LONG_PRESS_MS);
+      });
+
+      buttonEl.addEventListener('mouseup', function() {
+        clearTimeout(hintButtonLongPressTimer);
+      });
+
+      buttonEl.addEventListener('mouseleave', function() {
+        clearTimeout(hintButtonLongPressTimer);
+      });
+    }
+
     // =====================================================================
     // INIT
     // =====================================================================
@@ -5132,6 +5531,7 @@
     // Attach menu events to stores (after initial render)
     setupStoreMenuEvents(document.getElementById('store-top'));
     setupStoreMenuEvents(document.getElementById('store-bottom'));
+    setupHintHelperButtonEvents(document.getElementById('hint-helper-btn'));
   </script>
 </body>
 </html>
