@@ -142,6 +142,21 @@ bash start-server.sh [IP] [PORT] [--no-webxdc] [--no-wasm]
 ./mancala-solver/build.sh
 ```
 
+### Tune native solver parameters
+
+```sh
+cd mancala-solver
+cargo run --release --bin self_play_tune
+```
+
+Useful flags:
+
+- `--explore-budget-ms N` to change the short-budget search used while exploring nearby parameter sets
+- `--final-budget-ms N` to change the long validation budget; the default is `2000`
+- `--cycles N` to run more seat-optimization passes
+
+The tuner runs deterministic self-play games, reports the best parameter set it found for **player 1** and **player 2** separately, and prints timing/depth stats for the final validation games on the current machine.
+
 Examples:
 
 ```sh
@@ -153,6 +168,8 @@ bash start-server.sh --no-webxdc
 bash start-server.sh - 3000 --no-webxdc
 bash start-server.sh --no-wasm
 bash start-server.sh - 3000 --no-webxdc --no-wasm
+cd mancala-solver && cargo run --release --bin self_play_tune
+cd mancala-solver && cargo run --release --bin self_play_tune -- --explore-budget-ms 250 --final-budget-ms 2000 --cycles 3
 ```
 
 `--no-webxdc` makes `/webxdc.js` return 404 so you can test the plain-web local/PWA fallback.

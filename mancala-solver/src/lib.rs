@@ -1,21 +1,34 @@
-const PITS: usize = 6;
+pub const PITS: usize = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SearchConfig {
-    terminal_score_weight: i32,
-    store_score_weight: i32,
-    pit_score_weight: i32,
-    extra_turn_weight: i32,
-    capture_weight: i32,
-    mobility_weight: i32,
+pub struct SearchConfig {
+    pub terminal_score_weight: i32,
+    pub store_score_weight: i32,
+    pub pit_score_weight: i32,
+    pub extra_turn_weight: i32,
+    pub capture_weight: i32,
+    pub mobility_weight: i32,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            terminal_score_weight: 100_000,
+            store_score_weight: 1_000,
+            pit_score_weight: 25,
+            extra_turn_weight: 40,
+            capture_weight: 10,
+            mobility_weight: 5,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Board {
-    pits: [[u8; PITS]; 2],
-    stores: [u8; 2],
-    current_player: usize,
-    game_over: bool,
+pub struct Board {
+    pub pits: [[u8; PITS]; 2],
+    pub stores: [u8; 2],
+    pub current_player: usize,
+    pub game_over: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,7 +58,12 @@ fn current_time_ms() -> f64 {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn current_time_ms() -> f64 {
-    0.0
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f64()
+        * 1000.0
 }
 
 fn build_board(flat: [u8; 15]) -> Board {
@@ -76,6 +94,23 @@ fn build_search_config(
         capture_weight,
         mobility_weight,
     }
+}
+
+pub fn initial_board() -> Board {
+    Board {
+        pits: [[4; PITS], [4; PITS]],
+        stores: [0, 0],
+        current_player: 0,
+        game_over: false,
+    }
+}
+
+pub fn legal_moves_for_current_player(board: &Board) -> Vec<usize> {
+    legal_moves(board, board.current_player)
+}
+
+pub fn apply_move(board: &Board, pit_idx: usize) -> Option<Board> {
+    simulate_move(board, board.current_player, pit_idx).map(|result| result.board)
 }
 
 fn legal_moves(board: &Board, player: usize) -> Vec<usize> {
@@ -327,7 +362,7 @@ fn search(
     }
 }
 
-fn choose_move_for_depth(board: Board, max_depth: u32, config: &SearchConfig) -> i32 {
+pub fn choose_move_for_depth(board: Board, max_depth: u32, config: &SearchConfig) -> i32 {
     let depth = max_depth.max(1);
     search(
         &board,
@@ -351,7 +386,7 @@ fn pack_score_search_result(score: i32, completed_depth: u32) -> u64 {
     (u64::from(completed_depth) << 32) | u64::from(score_bits)
 }
 
-fn choose_move_for_time(board: Board, time_budget_ms: u32, config: &SearchConfig) -> (u8, u32) {
+pub fn choose_move_for_time(board: Board, time_budget_ms: u32, config: &SearchConfig) -> (u8, u32) {
     let legal = ordered_legal_moves(&board);
     debug_assert!(!legal.is_empty(), "choose_move_for_time requires at least one legal move");
     if time_budget_ms == 0 {
@@ -558,14 +593,23 @@ mod tests {
     #[test]
     fn depth_search_prefers_extra_turn() {
         let state = board([[0, 0, 0, 0, 2, 1], [4, 4, 4, 4, 4, 4]], [0, 0], 0);
-        assert_eq!(choose_move_for_depth(state, 4, &DEFAULT_SEARCH_CONFIG), 5);
+        assert_eq!(choose_move_for_depth(state, 4, &SearchConfig::default()), 5);
     }
 
     #[test]
     fn time_search_returns_legal_move_without_clock() {
         let state = board([[4, 4, 4, 4, 4, 4], [4, 4, 4, 4, 4, 4]], [0, 0], 0);
-        let (choice, completed_depth) = choose_move_for_time(state, 1, &DEFAULT_SEARCH_CONFIG);
+        let (choice, completed_depth) = choose_move_for_time(state, 1, &SearchConfig::default());
         assert!((0..PITS as u8).contains(&choice));
         assert!(completed_depth <= u32::MAX);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_clock_moves_forward() {
+        let first = current_time_ms();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let second = current_time_ms();
+        assert!(second >= first);
     }
 }
