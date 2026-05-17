@@ -1618,6 +1618,7 @@ async function runTests() {
       timeBudget: document.getElementById('cpu-config-time-budget').value,
       useParallel: document.getElementById('cpu-config-use-parallel').checked,
       maxWorkers: document.getElementById('cpu-config-max-workers').value,
+      resetLabel: document.getElementById('cpu-config-reset-btn').textContent,
       extendAnimationBudgetVisible: !!document.getElementById('cpu-config-extend-animation-budget'),
       extendAnimationBudget: document.getElementById('cpu-config-extend-animation-budget') ? document.getElementById('cpu-config-extend-animation-budget').checked : null,
     }));
@@ -1626,8 +1627,10 @@ async function runTests() {
     assert(aliceConfigScreen.overflowY === 'auto', `Alice config screen stays scrollable: ${aliceConfigScreen.overflowY}`);
     assert(aliceConfigScreen.searchMode === 'time' && aliceConfigScreen.timeBudget === '1000',
       `Alice config screen starts with timed-search defaults: mode=${aliceConfigScreen.searchMode}, budget=${aliceConfigScreen.timeBudget}`);
-    assert(aliceConfigScreen.useParallel && aliceConfigScreen.maxWorkers === '6',
+    assert(aliceConfigScreen.useParallel === false && aliceConfigScreen.maxWorkers === '6',
       `Alice config screen exposes parallel defaults: enabled=${aliceConfigScreen.useParallel}, maxWorkers=${aliceConfigScreen.maxWorkers}`);
+    assert(aliceConfigScreen.resetLabel === 'Reset to Defaults',
+      `Alice config screen includes a reset button: "${aliceConfigScreen.resetLabel}"`);
     assert(aliceConfigScreen.extendAnimationBudgetVisible && aliceConfigScreen.extendAnimationBudget === false,
       `Alice config screen exposes the animation-aware worker presearch option when workers are available: visible=${aliceConfigScreen.extendAnimationBudgetVisible}, enabled=${aliceConfigScreen.extendAnimationBudget}`);
 
@@ -1640,6 +1643,43 @@ async function runTests() {
     });
     assert(aliceKeyboardFocusPreserved === 'cpu-config-time-budget',
       `Alice config keeps the focused input active across viewport relayout: "${aliceKeyboardFocusPreserved}"`);
+
+    await pagePVC.evaluate(() => {
+      document.getElementById('cpu-config-search-mode').value = 'depth';
+      document.getElementById('cpu-config-search-mode').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-max-depth').value = '6';
+      document.getElementById('cpu-config-max-depth').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-use-parallel').checked = true;
+      document.getElementById('cpu-config-use-parallel').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-max-workers').value = '2';
+      document.getElementById('cpu-config-max-workers').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-extend-animation-budget').checked = true;
+      document.getElementById('cpu-config-extend-animation-budget').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-store').value = '900';
+      document.getElementById('cpu-config-store').dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('cpu-config-reset-btn').click();
+    });
+    await sleep(120);
+    const aliceResetState = await pagePVC.evaluate(() => ({
+      searchMode: document.getElementById('cpu-config-search-mode').value,
+      timeBudget: document.getElementById('cpu-config-time-budget').value,
+      maxDepth: document.getElementById('cpu-config-max-depth').value,
+      useParallel: document.getElementById('cpu-config-use-parallel').checked,
+      maxWorkers: document.getElementById('cpu-config-max-workers').value,
+      extendAnimationBudget: document.getElementById('cpu-config-extend-animation-budget').checked,
+      storeWeight: document.getElementById('cpu-config-store').value,
+      storedDefaults: localStorage.getItem('mancala-lookahead-default-alice'),
+    }));
+    assert(aliceResetState.searchMode === 'time'
+      && aliceResetState.timeBudget === '1000'
+      && aliceResetState.maxDepth === '42'
+      && aliceResetState.useParallel === false
+      && aliceResetState.maxWorkers === '6'
+      && aliceResetState.extendAnimationBudget === false
+      && aliceResetState.storeWeight === '1000',
+      `Alice reset restores the built-in CPU defaults in the form: ${JSON.stringify(aliceResetState)}`);
+    assert(aliceResetState.storedDefaults === null,
+      `Resetting the form alone does not save CPU defaults until continue is pressed: ${aliceResetState.storedDefaults}`);
 
     await pagePVC.evaluate(() => {
       document.getElementById('cpu-config-search-mode').value = 'depth';
@@ -2157,11 +2197,78 @@ async function runTests() {
       value: document.getElementById('menu-anim-speed').value,
       status: document.getElementById('menu-anim-status').textContent,
     }));
-    assert(defaultAnimMenuState.value === '700',
-      `Animation speed slider defaults to 700ms: ${defaultAnimMenuState.value}`);
-    assert(defaultAnimMenuState.status === '700ms per seed',
-      `Animation speed status defaults to 700ms per seed: "${defaultAnimMenuState.status}"`);
+    assert(defaultAnimMenuState.value === '500',
+      `Animation speed slider defaults to 500ms: ${defaultAnimMenuState.value}`);
+    assert(defaultAnimMenuState.status === '500ms per seed',
+      `Animation speed status defaults to 500ms per seed: "${defaultAnimMenuState.status}"`);
     await pageMD.close();
+
+    const pageMReset = await browser.newPage();
+    await configurePageSettings(pageMReset, {
+      displayMode: 'numbers',
+      animSpeed: '1200',
+      boardRotation: '90',
+      boardSizePercent: '70',
+      showHud: 'true',
+      showMenuButton: 'false',
+    }, { beforeNavigation: true });
+    await pageMReset.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle0' });
+    await pageMReset.evaluate(() => {
+      document.getElementById('hotseat-btn').click();
+      document.getElementById('store-bottom').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      document.getElementById('menu-reset-defaults').click();
+    });
+    await sleep(300);
+    const resetMenuState = await pageMReset.evaluate(() => ({
+      displayMode,
+      animSpeed,
+      preferredAnimSpeed,
+      showHud,
+      showMenuButton,
+      boardRotationMode,
+      boardSizePercent,
+      sliderValue: document.getElementById('menu-anim-speed').value,
+      sliderDisabled: document.getElementById('menu-anim-speed').disabled,
+      animStatus: document.getElementById('menu-anim-status').textContent,
+      rotateText: document.getElementById('menu-rotate').textContent,
+      toggleDisplayText: document.getElementById('menu-toggle-display').textContent,
+      toggleHudText: document.getElementById('menu-toggle-hud').textContent,
+      toggleMenuButtonText: document.getElementById('menu-toggle-menu-button').textContent,
+      storage: {
+        displayMode: localStorage.getItem('mancala-displayMode'),
+        animSpeed: localStorage.getItem('mancala-animSpeed'),
+        boardRotation: localStorage.getItem('mancala-boardRotation'),
+        boardSizePercent: localStorage.getItem('mancala-boardSizePercent'),
+        showHud: localStorage.getItem('mancala-showHud'),
+        showMenuButton: localStorage.getItem('mancala-showMenuButton'),
+      },
+    }));
+    assert(resetMenuState.displayMode === 'marbles' && resetMenuState.animSpeed === 500 && resetMenuState.preferredAnimSpeed === 500,
+      `Reset to Defaults restores marbles mode and 500ms animation: mode=${resetMenuState.displayMode}, anim=${resetMenuState.animSpeed}, preferred=${resetMenuState.preferredAnimSpeed}`);
+    assert(resetMenuState.showHud === false && resetMenuState.showMenuButton === true,
+      `Reset to Defaults restores HUD/menu button defaults: hud=${resetMenuState.showHud}, gear=${resetMenuState.showMenuButton}`);
+    assert(resetMenuState.boardRotationMode === 'auto' && resetMenuState.boardSizePercent === 100,
+      `Reset to Defaults restores rotation and board size defaults: rotation=${resetMenuState.boardRotationMode}, size=${resetMenuState.boardSizePercent}`);
+    assert(resetMenuState.sliderValue === '500' && !resetMenuState.sliderDisabled && resetMenuState.animStatus === '500ms per seed',
+      `Reset to Defaults restores the sow animation control: value=${resetMenuState.sliderValue}, disabled=${resetMenuState.sliderDisabled}, status="${resetMenuState.animStatus}"`);
+    assert(resetMenuState.rotateText === 'Rotation: Auto'
+      && resetMenuState.toggleDisplayText === 'Switch to Numbers'
+      && resetMenuState.toggleHudText === 'Show Turn Info and Scores'
+      && resetMenuState.toggleMenuButtonText === 'Hide Gear Button',
+      `Reset to Defaults refreshes the menu labels: ${JSON.stringify({
+        rotateText: resetMenuState.rotateText,
+        toggleDisplayText: resetMenuState.toggleDisplayText,
+        toggleHudText: resetMenuState.toggleHudText,
+        toggleMenuButtonText: resetMenuState.toggleMenuButtonText,
+      })}`);
+    assert(resetMenuState.storage.displayMode === 'marbles'
+      && resetMenuState.storage.animSpeed === '500'
+      && resetMenuState.storage.boardRotation === 'auto'
+      && resetMenuState.storage.boardSizePercent === '100'
+      && resetMenuState.storage.showHud === 'false'
+      && resetMenuState.storage.showMenuButton === 'true',
+      `Reset to Defaults persists the local settings defaults: ${JSON.stringify(resetMenuState.storage)}`);
+    await pageMReset.close();
 
     const menuScrollContext = browser.createBrowserContext
       ? await browser.createBrowserContext()

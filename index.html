@@ -1004,6 +1004,7 @@
         </div>
         <div class="slider-status" id="menu-anim-status">Off</div>
       </div>
+      <button class="menu-btn secondary" id="menu-reset-defaults" onclick="menuResetSettings()">Reset to Defaults</button>
       <button class="menu-btn danger" id="menu-quit" onclick="menuQuit()">Quit Game</button>
       <button class="menu-btn secondary" id="menu-about" onclick="showAbout()">About</button>
     </div>
@@ -1105,7 +1106,7 @@
       // Board scale as a percent of the best-fit size.
       boardSizePercent: 100,
       // Preferred sow animation delay in ms per seed. 0 disables animations.
-      animSpeed: 700,
+      animSpeed: 500,
       // Turn/status HUD visibility.
       showHud: false,
       // Whether the closed-state gear button is shown during gameplay.
@@ -1153,9 +1154,18 @@
       boardRotationMode = settings.boardRotation;
       boardSizePercent = settings.boardSizePercent;
       preferredAnimSpeed = settings.animSpeed;
-      animSpeed = displayMode === 'numbers' ? 0 : preferredAnimSpeed; // 0 = off, 1-100 = slow-to-fast
+      animSpeed = displayMode === 'numbers' ? 0 : preferredAnimSpeed;
       showHud = settings.showHud;
       showMenuButton = settings.showMenuButton;
+    }
+
+    function persistLocalSettings(settings) {
+      localStorage.setItem(LOCAL_SETTINGS_KEYS.displayMode, settings.displayMode);
+      localStorage.setItem(LOCAL_SETTINGS_KEYS.boardRotation, settings.boardRotation);
+      localStorage.setItem(LOCAL_SETTINGS_KEYS.boardSizePercent, settings.boardSizePercent);
+      localStorage.setItem(LOCAL_SETTINGS_KEYS.animSpeed, settings.animSpeed);
+      localStorage.setItem(LOCAL_SETTINGS_KEYS.showHud, settings.showHud ? 'true' : 'false');
+      localStorage.setItem(LOCAL_SETTINGS_KEYS.showMenuButton, settings.showMenuButton ? 'true' : 'false');
     }
 
     function reloadLocalSettingsFromStorage() {
@@ -1571,7 +1581,7 @@
       searchMode: 'time',
       maxDepth: DEFAULT_LOOKAHEAD_DEPTH,
       timeBudgetMs: 1000,
-      useParallelWorkers: true,
+      useParallelWorkers: false,
       maxWorkers: MAX_PARALLEL_LOOKAHEAD_WORKERS,
       extendTimeBudgetToAnimation: false,
       terminalScoreWeight: LOOKAHEAD_TERMINAL_SCORE_WEIGHT,
@@ -2746,6 +2756,11 @@
       updateCpuSetupLookaheadConfig(field, !!checked);
     }
 
+    function resetCpuSetupLookaheadDefaults() {
+      cpuSetupState.draftLookaheadConfig = normalizeRustLookaheadConfig(DEFAULT_LOOKAHEAD_CONFIG);
+      renderCpuSetup();
+    }
+
     function applySelectedCpuSetupPlayer(player) {
       if (cpuSetupState.mode === LOCAL_MODE_TYPES.playerVsCpu) {
         cpuSetupState.selectedTopPlayer = player;
@@ -3145,6 +3160,7 @@
         + '</div>'
         + '</div>'
         + '<div class="setup-actions">'
+        + '<button class="setup-secondary-btn" id="cpu-config-reset-btn" onclick="resetCpuSetupLookaheadDefaults()">Reset to Defaults</button>'
         + '<button class="setup-primary-btn" id="cpu-config-confirm-btn" onclick="confirmCpuSetupLookaheadConfig()">Save & Continue</button>'
         + '</div>'
         + '</div>';
@@ -4747,6 +4763,21 @@
       if (animating) applyBoardTransform();
       else render();
       updateBoardSizeStatus(boardSizePercent);
+    }
+
+    function menuResetSettings() {
+      const defaultSettings = loadLocalSettingsFromStorage();
+      defaultSettings.displayMode = DEFAULT_LOCAL_SETTINGS.displayMode;
+      defaultSettings.boardRotation = DEFAULT_LOCAL_SETTINGS.boardRotation;
+      defaultSettings.boardSizePercent = DEFAULT_LOCAL_SETTINGS.boardSizePercent;
+      defaultSettings.animSpeed = DEFAULT_LOCAL_SETTINGS.animSpeed;
+      defaultSettings.showHud = DEFAULT_LOCAL_SETTINGS.showHud;
+      defaultSettings.showMenuButton = DEFAULT_LOCAL_SETTINGS.showMenuButton;
+      applyLocalSettings(defaultSettings);
+      persistLocalSettings(defaultSettings);
+      render();
+      updateMenuLabels();
+      updateMenuButton();
     }
 
     function menuQuit() {
