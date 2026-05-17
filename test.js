@@ -3093,9 +3093,156 @@ async function runTests() {
     const q2onJoin = await pageQ2.$eval('#join-screen', el => el.style.display !== 'none');
     assert(q2onJoin, 'Quit test: P2 on join screen after dismissing dialog');
 
+    // Close both pages, reopen from the same persisted update history, and verify
+    // the old game does not replay or poison the next session.
     await pageQ1.close();
     await pageQ2.close();
+
+    const pageQ1Reopen = await quitTestContext.newPage();
+    const pageQ2Reopen = await quitTestContext.newPage();
+    pageQ1Reopen.on('console', m => console.log(`    [Q1 REOPEN] ${m.text()}`));
+    pageQ2Reopen.on('console', m => console.log(`    [Q2 REOPEN] ${m.text()}`));
+    await configurePageSettings(pageQ1Reopen, { animSpeed: '40' }, { beforeNavigation: true, preserveUpdatesKey: true });
+    await configurePageSettings(pageQ2Reopen, { animSpeed: '40' }, { beforeNavigation: true, preserveUpdatesKey: true });
+    await pageQ1Reopen.goto(`http://localhost:${PORT}/index.html#name=quit1&addr=quit1@local.host`, { waitUntil: 'networkidle0' });
+    await pageQ2Reopen.goto(`http://localhost:${PORT}/index.html#name=quit2&addr=quit2@local.host`, { waitUntil: 'networkidle0' });
+    await sleep(1200);
+
+    const reopenedQuitState = await pageQ1Reopen.evaluate(() => ({
+      joinVisible: document.getElementById('join-screen').style.display !== 'none',
+      gameVisible: document.getElementById('game-screen').style.display === 'block',
+      players: {
+        player1: state.player1,
+        player2: state.player2,
+      },
+      stores: state.stores.slice(),
+      gameOver: state.gameOver,
+      animating,
+      pendingMoveQueueLength: pendingMoveQueue.length,
+      pendingMenuMoveQueueLength: pendingMenuMoveQueue.length,
+    }));
+    assert(reopenedQuitState.joinVisible && !reopenedQuitState.gameVisible,
+      'Quit replay test: reopening after a quit lands cleanly on the join screen');
+    assert(!reopenedQuitState.players.player1 && !reopenedQuitState.players.player2
+      && reopenedQuitState.stores[0] === 0 && reopenedQuitState.stores[1] === 0
+      && !reopenedQuitState.gameOver && !reopenedQuitState.animating
+      && reopenedQuitState.pendingMoveQueueLength === 0
+      && reopenedQuitState.pendingMenuMoveQueueLength === 0,
+      `Quit replay test: reopening clears stale multiplayer state: ${JSON.stringify(reopenedQuitState)}`);
+
+    await pageQ1Reopen.evaluate(() => document.getElementById('join-btn').click());
+    await sleep(400);
+    await pageQ2Reopen.evaluate(() => document.getElementById('join-btn').click());
+    await sleep(600);
+
+    const quitReplayPlayable = await pageQ1Reopen.evaluate(() => ({
+      gameVisible: document.getElementById('game-screen').style.display === 'block',
+      stores: state.stores.slice(),
+      pits: state.pits.map(row => row.slice()),
+      currentPlayer: state.currentPlayer,
+      gameOver: state.gameOver,
+      clickablePits: document.querySelectorAll('#bottom-row .pit.clickable').length,
+      status: document.getElementById('status').textContent,
+    }));
+    assert(quitReplayPlayable.gameVisible && !quitReplayPlayable.gameOver
+      && quitReplayPlayable.currentPlayer === 0
+      && quitReplayPlayable.stores[0] === 0 && quitReplayPlayable.stores[1] === 0
+      && JSON.stringify(quitReplayPlayable.pits) === JSON.stringify([[4,4,4,4,4,4],[4,4,4,4,4,4]])
+      && quitReplayPlayable.clickablePits === 6,
+      `Quit replay test: rejoined game starts from a clean playable board: ${JSON.stringify(quitReplayPlayable)}`);
+    assert(quitReplayPlayable.status === 'Your turn!',
+      `Quit replay test: player 1 can act immediately after rejoining: "${quitReplayPlayable.status}"`);
+
+    await pageQ1Reopen.close();
+    await pageQ2Reopen.close();
     await quitTestContext.close();
+
+    // =========================================================
+    // Online New Game after game over should reset cleanly and remain playable
+    // =========================================================
+    console.log('\n=== Online new game after game over ===');
+    const newGameTestContext = browser.createBrowserContext
+      ? await browser.createBrowserContext()
+      : await browser.createIncognitoBrowserContext();
+    const pageN1 = await newGameTestContext.newPage();
+    const pageN2 = await newGameTestContext.newPage();
+    pageN1.on('console', m => console.log(`    [N1] ${m.text()}`));
+    pageN2.on('console', m => console.log(`    [N2] ${m.text()}`));
+    await pageN1.goto(`http://localhost:${PORT}/index.html#name=newgame1&addr=newgame1@local.host`, { waitUntil: 'networkidle0' });
+    await pageN2.goto(`http://localhost:${PORT}/index.html#name=newgame2&addr=newgame2@local.host`, { waitUntil: 'networkidle0' });
+
+    await pageN1.evaluate(() => document.getElementById('join-btn').click());
+    await sleep(400);
+    await pageN2.evaluate(() => document.getElementById('join-btn').click());
+    await sleep(600);
+
+    await pageN1.evaluate(() => {
+      state.pits = [[0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0]];
+      state.stores = [28, 20];
+      state.currentPlayer = 0;
+      state.gameOver = true;
+      render();
+    });
+    await pageN2.evaluate(() => {
+      state.pits = [[0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0]];
+      state.stores = [28, 20];
+      state.currentPlayer = 0;
+      state.gameOver = true;
+      render();
+    });
+    await sleep(100);
+
+    await pageN1.evaluate(() => document.querySelector('#actions button').click());
+    await sleep(600);
+
+    const afterOnlineNewGame = await pageN1.evaluate(() => ({
+      joinVisible: document.getElementById('join-screen').style.display !== 'none',
+      gameVisible: document.getElementById('game-screen').style.display === 'block',
+      players: {
+        player1: state.player1,
+        player2: state.player2,
+      },
+      stores: state.stores.slice(),
+      gameOver: state.gameOver,
+      animating,
+      pendingMoveQueueLength: pendingMoveQueue.length,
+      pendingMenuMoveQueueLength: pendingMenuMoveQueue.length,
+    }));
+    assert(afterOnlineNewGame.joinVisible && !afterOnlineNewGame.gameVisible,
+      'Online new game test: New Game returns both players to the join screen');
+    assert(!afterOnlineNewGame.players.player1 && !afterOnlineNewGame.players.player2
+      && afterOnlineNewGame.stores[0] === 0 && afterOnlineNewGame.stores[1] === 0
+      && !afterOnlineNewGame.gameOver && !afterOnlineNewGame.animating
+      && afterOnlineNewGame.pendingMoveQueueLength === 0
+      && afterOnlineNewGame.pendingMenuMoveQueueLength === 0,
+      `Online new game test: New Game clears stale remote state: ${JSON.stringify(afterOnlineNewGame)}`);
+
+    await pageN1.evaluate(() => document.getElementById('join-btn').click());
+    await sleep(400);
+    await pageN2.evaluate(() => document.getElementById('join-btn').click());
+    await sleep(600);
+
+    const onlineNewGamePlayable = await pageN1.evaluate(() => ({
+      gameVisible: document.getElementById('game-screen').style.display === 'block',
+      stores: state.stores.slice(),
+      pits: state.pits.map(row => row.slice()),
+      currentPlayer: state.currentPlayer,
+      gameOver: state.gameOver,
+      clickablePits: document.querySelectorAll('#bottom-row .pit.clickable').length,
+      status: document.getElementById('status').textContent,
+    }));
+    assert(onlineNewGamePlayable.gameVisible && !onlineNewGamePlayable.gameOver
+      && onlineNewGamePlayable.currentPlayer === 0
+      && onlineNewGamePlayable.stores[0] === 0 && onlineNewGamePlayable.stores[1] === 0
+      && JSON.stringify(onlineNewGamePlayable.pits) === JSON.stringify([[4,4,4,4,4,4],[4,4,4,4,4,4]])
+      && onlineNewGamePlayable.clickablePits === 6,
+      `Online new game test: restarted game is playable from the initial board: ${JSON.stringify(onlineNewGamePlayable)}`);
+    assert(onlineNewGamePlayable.status === 'Your turn!',
+      `Online new game test: player 1 can move after restarting: "${onlineNewGamePlayable.status}"`);
+
+    await pageN1.close();
+    await pageN2.close();
+    await newGameTestContext.close();
 
     // =========================================================
     // Animation race condition: P1 anim ON, P2 anim OFF

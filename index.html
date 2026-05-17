@@ -1172,6 +1172,12 @@
     let hotseatMode = false;     // true = local 2-player mode, no networking
     let suppressBoardTransformTransition = true;
 
+    function resetTransientRemoteGameState() {
+      animating = false;
+      pendingMoveQueue = [];
+      pendingMenuMoveQueue = [];
+    }
+
     // Simple seeded PRNG (mulberry32) — deterministic from a 32-bit seed
     function mulberry32(seed) {
       return function() {
@@ -2995,6 +3001,7 @@
           const { addr, name, colorSeed } = payload;
           if (state.player1 && state.player1.addr === addr) return;
           if (state.player2 && state.player2.addr === addr) return;
+          pendingQuitDialog = false;
           if (!state.player1) {
             state.player1 = { addr, name };
             if (colorSeed != null) {
@@ -3013,6 +3020,8 @@
         }
 
         case 'newgame': {
+          resetTransientRemoteGameState();
+          pendingQuitDialog = false;
           state = initState();
           if (payload.colorSeed != null) {
             state.colorSeed = payload.colorSeed;
@@ -3025,14 +3034,13 @@
           const quitterAddr = payload.addr;
           const myAddr = getWebxdcSelfAddr();
           const wasOpponent = quitterAddr !== myAddr;
+          resetTransientRemoteGameState();
           state = initState();
           if (payload.colorSeed != null) {
             state.colorSeed = payload.colorSeed;
           }
           assignMarbleColors(state.colorSeed);
-          if (wasOpponent) {
-            pendingQuitDialog = true;
-          }
+          pendingQuitDialog = wasOpponent;
           break;
         }
       }
@@ -3637,9 +3645,12 @@
     function setupListener() {
       const runtime = getWebxdcRuntime();
       if (!runtime) return;
-      runtime.setUpdateListener((update) => {
+      let replayingStoredUpdates = true;
+      function processIncomingUpdate(update) {
         const payload = update.payload;
-        if (payload && payload.type === 'move' && animSpeed > 0 && menuOpen) {
+        if (payload && payload.type === 'move' && replayingStoredUpdates) {
+          applyAuthoritativeMovePayload(payload);
+        } else if (payload && payload.type === 'move' && animSpeed > 0 && menuOpen) {
           pendingMenuMoveQueue.push(payload);
         } else if (payload && payload.type === 'move' && animSpeed > 0 && !animating) {
           // Animate the sowing, then apply final state for consistency
@@ -3653,13 +3664,23 @@
           render();
         } else {
           applyUpdate(payload);
+        }
+        if (!replayingStoredUpdates) {
           render();
         }
+        if (!replayingStoredUpdates && pendingQuitDialog) {
+          pendingQuitDialog = false;
+          showQuitDialog();
+        }
+      }
+      Promise.resolve(runtime.setUpdateListener(processIncomingUpdate, 0)).then(function() {
+        replayingStoredUpdates = false;
+        render();
         if (pendingQuitDialog) {
           pendingQuitDialog = false;
           showQuitDialog();
         }
-      }, 0);
+      });
     }
 
     function tryJoin() {
