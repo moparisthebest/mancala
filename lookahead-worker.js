@@ -273,6 +273,16 @@ function decodePackedScoreResult(packedResult) {
   return { score, completedDepth };
 }
 
+function decodeTimedSolverResult(packedResult) {
+  if (typeof packedResult !== 'bigint') {
+    throw new Error('Expected a BigInt timed solver result, got ' + typeof packedResult);
+  }
+  const moveBits = Number(packedResult & 0xffffffffn);
+  const completedDepth = Number((packedResult >> 32n) & 0xffffffffn);
+  const pitIdx = moveBits >= 0x80000000 ? moveBits - 0x100000000 : moveBits;
+  return { pitIdx, completedDepth };
+}
+
 async function initializeWorker(message) {
   workerEngineKind = message.engineKind;
   if (workerEngineKind === 'rust') {
@@ -290,7 +300,9 @@ async function initializeWorker(message) {
     });
     const exports = instance.instance.exports;
     if (typeof exports.mancala_solver_search_score_for_time !== 'function'
-        || typeof exports.mancala_solver_search_score_window_for_time !== 'function') {
+        || typeof exports.mancala_solver_search_score_window_for_time !== 'function'
+        || typeof exports.mancala_solver_choose_move_for_depth !== 'function'
+        || typeof exports.mancala_solver_choose_move_for_time !== 'function') {
       throw new Error('WASM CPU engine worker export is missing.');
     }
     wasmCpuEngineExports = exports;
@@ -333,6 +345,81 @@ function runRustDepthSearch(message) {
   return decodePackedScoreResult(packedResult);
 }
 
+function runJavaScriptChooseMoveForDepth(message) {
+  const depth = Math.max(1, Math.floor(Number(message.config.maxDepth || 1)) || 1);
+  const result = searchJavaScriptLookahead(
+    message.boardState,
+    message.playerIdx,
+    depth,
+    message.config,
+    LOOKAHEAD_MIN_SCORE,
+    LOOKAHEAD_MAX_SCORE,
+    null
+  );
+  return { pitIdx: result.bestMove };
+}
+
+function runJavaScriptChooseMoveForTime(message) {
+  const budget = Math.max(0, Math.floor(Number(message.config.timeBudgetMs || 0)) || 0);
+  const orderedPitIndices = getOrderedLookaheadPitIndices(message.boardState);
+  if (orderedPitIndices.length === 0) return { pitIdx: -1 };
+  if (budget === 0) return { pitIdx: orderedPitIndices[0] };
+
+  const deadlineMs = performance.now() + budget;
+  let bestMove = orderedPitIndices[0];
+  let depth = 1;
+  while (depth < 0xffffffff) {
+    const result = searchJavaScriptLookahead(
+      message.boardState,
+      message.playerIdx,
+      depth,
+      message.config,
+      LOOKAHEAD_MIN_SCORE,
+      LOOKAHEAD_MAX_SCORE,
+      deadlineMs
+    );
+    if (!result.completed) break;
+    bestMove = result.bestMove;
+    depth++;
+  }
+  return { pitIdx: bestMove };
+}
+
+function runRustChooseMoveForDepth(message) {
+  const args = encodeBoardStateForSolver(message.boardState);
+  const configArgs = [
+    message.config.terminalScoreWeight,
+    message.config.storeScoreWeight,
+    message.config.pitScoreWeight,
+    message.config.extraTurnWeight,
+    message.config.captureWeight,
+    message.config.mobilityWeight,
+  ];
+  return {
+    pitIdx: wasmCpuEngineExports.mancala_solver_choose_move_for_depth.apply(
+      null,
+      args.concat([Math.max(1, Math.floor(Number(message.config.maxDepth || 1)) || 1)]).concat(configArgs)
+    ),
+  };
+}
+
+function runRustChooseMoveForTime(message) {
+  const args = encodeBoardStateForSolver(message.boardState);
+  const configArgs = [
+    message.config.terminalScoreWeight,
+    message.config.storeScoreWeight,
+    message.config.pitScoreWeight,
+    message.config.extraTurnWeight,
+    message.config.captureWeight,
+    message.config.mobilityWeight,
+  ];
+  const packedResult = wasmCpuEngineExports.mancala_solver_choose_move_for_time.apply(
+    null,
+    args.concat([Math.max(0, Math.floor(Number(message.config.timeBudgetMs || 0)) || 0)]).concat(configArgs)
+  );
+  return { pitIdx: decodeTimedSolverResult(packedResult).pitIdx };
+}
+
 self.onmessage = async function(event) {
   const message = event.data || {};
   try {
@@ -350,6 +437,23 @@ self.onmessage = async function(event) {
       if (workerEngineKind === 'rust') {
         const result = runRustDepthSearch(message);
         self.postMessage({ type: 'search-result', requestId: message.requestId, score: result.score, completedDepth: result.completedDepth });
+        return;
+      }
+      throw new Error('Worker engine is not initialized.');
+    }
+    if (message.type === 'choose-move') {
+      if (workerEngineKind === 'javascript') {
+        const result = message.config.searchMode === 'depth'
+          ? runJavaScriptChooseMoveForDepth(message)
+          : runJavaScriptChooseMoveForTime(message);
+        self.postMessage({ type: 'choose-result', requestId: message.requestId, pitIdx: result.pitIdx });
+        return;
+      }
+      if (workerEngineKind === 'rust') {
+        const result = message.config.searchMode === 'depth'
+          ? runRustChooseMoveForDepth(message)
+          : runRustChooseMoveForTime(message);
+        self.postMessage({ type: 'choose-result', requestId: message.requestId, pitIdx: result.pitIdx });
         return;
       }
       throw new Error('Worker engine is not initialized.');

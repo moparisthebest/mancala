@@ -1471,6 +1471,83 @@ async function runTests() {
       }
     }
 
+    const pageCpuOverlap = await playerCpuContext.newPage();
+    pageCpuOverlap.on('console', m => console.log(`    [PVC OVERLAP] ${m.text()}`));
+    pageCpuOverlap.on('pageerror', e => console.log(`    [PVC OVERLAP ERROR] ${e.message}`));
+    await configurePageSettings(pageCpuOverlap, { animSpeed: '20' }, { beforeNavigation: true });
+    await pageCpuOverlap.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle0' });
+    const cpuPresearchState = await pageCpuOverlap.evaluate(async () => {
+      cpuTurnDelayMs = 0;
+      startLocalModeGame({
+        mode: LOCAL_MODE_TYPES.playerVsCpu,
+        topPlayer: AVAILABLE_PLAYERS.find(p => p.id === 'alice'),
+        bottomPlayer: null,
+        startingPlayer: 1,
+      });
+      handlePitClick(1, 0);
+      const immediateState = {
+        animating,
+        currentPlayer: state.currentPlayer,
+        pendingCpuTurnPlanExists: !!pendingCpuTurnPlan,
+      };
+      await new Promise(resolve => requestAnimationFrame(() => resolve()));
+      return {
+        immediateState,
+        afterFrameState: {
+          animating,
+          currentPlayer: state.currentPlayer,
+          pendingCpuTurnPlanExists: !!pendingCpuTurnPlan,
+          pendingCpuTurnPlanPlayer: pendingCpuTurnPlan ? pendingCpuTurnPlan.playerIdx : null,
+          pendingCpuTurnTimerActive: pendingCpuTurnTimer != null,
+        },
+      };
+    });
+    assert(cpuPresearchState.immediateState.animating && cpuPresearchState.immediateState.currentPlayer === 1,
+      `Player-vs-CPU animation is already in progress immediately after the human move: animating=${cpuPresearchState.immediateState.animating}, currentPlayer=${cpuPresearchState.immediateState.currentPlayer}`);
+    assert(!cpuPresearchState.immediateState.pendingCpuTurnPlanExists,
+      `CPU presearch does not block the first animation frame: immediatePlan=${cpuPresearchState.immediateState.pendingCpuTurnPlanExists}`);
+    assert(cpuPresearchState.afterFrameState.animating && cpuPresearchState.afterFrameState.pendingCpuTurnPlanExists && cpuPresearchState.afterFrameState.pendingCpuTurnPlanPlayer === 0 && cpuPresearchState.afterFrameState.pendingCpuTurnTimerActive,
+      `CPU search starts on the next frame while animation is still running: animating=${cpuPresearchState.afterFrameState.animating}, plan=${cpuPresearchState.afterFrameState.pendingCpuTurnPlanExists}, player=${cpuPresearchState.afterFrameState.pendingCpuTurnPlanPlayer}, timer=${cpuPresearchState.afterFrameState.pendingCpuTurnTimerActive}`);
+    await pageCpuOverlap.close();
+
+    const pageCpuFallback = await playerCpuContext.newPage();
+    pageCpuFallback.on('console', m => console.log(`    [PVC FALLBACK] ${m.text()}`));
+    pageCpuFallback.on('pageerror', e => console.log(`    [PVC FALLBACK ERROR] ${e.message}`));
+    await configurePageSettings(pageCpuFallback, { animSpeed: '20' }, { beforeNavigation: true });
+    await pageCpuFallback.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle0' });
+    await pageCpuFallback.waitForFunction(() => window.wasmPlayersLoadState === 'ready', { timeout: 15000 });
+    const cpuFallbackState = await pageCpuFallback.evaluate(async () => {
+      const originalWorker = window.Worker;
+      cpuTurnDelayMs = 0;
+      window.Worker = undefined;
+      try {
+        const ashton = AVAILABLE_PLAYERS.find(p => p.id === 'wasm-lookahead');
+        startLocalModeGame({
+          mode: LOCAL_MODE_TYPES.playerVsCpu,
+          topPlayer: ashton,
+          bottomPlayer: null,
+          startingPlayer: 1,
+        });
+        handlePitClick(1, 0);
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        return {
+          animating,
+          currentPlayer: state.currentPlayer,
+          status: document.getElementById('status').textContent,
+          pendingCpuTurnPlanExists: !!pendingCpuTurnPlan,
+          stores: state.stores.slice(),
+          pits: state.pits.map(row => row.slice()),
+        };
+      } finally {
+        window.Worker = originalWorker;
+      }
+    });
+    assert(cpuFallbackState.currentPlayer !== 0 || cpuFallbackState.stores[0] > 0 || cpuFallbackState.pits[0].some(count => count !== 4),
+      `Local Ashton still moves when workers are unavailable: currentPlayer=${cpuFallbackState.currentPlayer}, stores=${cpuFallbackState.stores.join('-')}, pits=${JSON.stringify(cpuFallbackState.pits[0])}`);
+    assert(!cpuFallbackState.pendingCpuTurnPlanExists,
+      `No stuck CPU plan remains after the no-worker fallback turn resolves: ${cpuFallbackState.pendingCpuTurnPlanExists}`);
+    await pageCpuFallback.close();
+
     await pagePVC.evaluate(() => document.getElementById('player-vs-cpu-btn').click());
     await sleep(120);
     const pvcpuSetupOpen = await pagePVC.evaluate(() => ({

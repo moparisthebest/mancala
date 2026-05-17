@@ -2171,8 +2171,8 @@
           const message = event.data || {};
           if (message.requestId !== requestId) return;
           cleanup();
-          if (message.type === 'search-result') resolve(message);
-          else reject(new Error(message.message || 'Worker task failed.'));
+          if (message.type === 'error') reject(new Error(message.message || 'Worker task failed.'));
+          else resolve(message);
         }
 
         function onError(event) {
@@ -2184,6 +2184,44 @@
         worker.addEventListener('error', onError);
         worker.postMessage(Object.assign({ type: 'search-depth', requestId: requestId }, payload));
       });
+    }
+
+    function canUseLookaheadMoveWorker() {
+      return typeof Worker === 'function';
+    }
+
+    function chooseLookaheadMoveViaWorker(controller, boardState, playerIdx, options) {
+      const normalizedOptions = Object.assign({
+        fallbackToMainThread: true,
+      }, options);
+      const normalizedConfig = normalizeRustLookaheadConfig(controller.solverConfig || controller.defaultConfig || DEFAULT_LOOKAHEAD_CONFIG);
+      if (!canUseLookaheadMoveWorker()) {
+        if (normalizedOptions.fallbackToMainThread) {
+          return Promise.resolve(controller.chooseMove(boardState, playerIdx));
+        }
+        return Promise.reject(new Error('Worker-based lookahead is unavailable.'));
+      }
+      return createLookaheadWorker(controller.engineKind)
+        .then(function(worker) {
+          return runLookaheadWorkerTask(worker, {
+            type: 'choose-move',
+            boardState: buildCpuStrategyStateFromBoard(boardState),
+            playerIdx: playerIdx,
+            config: normalizedConfig,
+          }).finally(function() {
+            try { worker.terminate(); } catch (err) {}
+          });
+        })
+        .then(function(message) {
+          return validateRustLookaheadMove(boardState, playerIdx, message.pitIdx);
+        })
+        .catch(function(err) {
+          if (!normalizedOptions.fallbackToMainThread) {
+            throw err;
+          }
+          console.warn(controller.name + ' local worker move selection failed, falling back to the main-thread chooser:', err);
+          return controller.chooseMove(boardState, playerIdx);
+        });
     }
 
     function terminateLookaheadWorkers(workers) {
@@ -2576,6 +2614,7 @@
     let localAutomatedPlayers = [null, null];
     let cpuSetupState = createDefaultCpuSetupState();
     let pendingCpuTurnTimer = null;
+    let pendingCpuTurnPlan = null;
     let pendingCpuTurnToken = 0;
     let cpuTurnDelayMs = 250;
 
@@ -2597,6 +2636,7 @@
         clearTimeout(pendingCpuTurnTimer);
         pendingCpuTurnTimer = null;
       }
+      pendingCpuTurnPlan = null;
     }
 
     function resetLocalModeState() {
@@ -2733,12 +2773,148 @@
 
     function buildCpuStrategyState() {
       normalizeStateToCounts();
+      return buildCpuStrategyStateFromBoard(state);
+    }
+
+    function buildCpuStrategyStateFromBoard(boardState) {
       return {
-        pits: clonePitCounts(state.pits),
-        stores: cloneStoreCounts(state.stores),
-        currentPlayer: state.currentPlayer,
-        gameOver: state.gameOver,
+        pits: clonePitCounts(boardState.pits),
+        stores: cloneStoreCounts(boardState.stores),
+        currentPlayer: boardState.currentPlayer,
+        gameOver: boardState.gameOver,
       };
+    }
+
+    function buildCpuTurnKey(strategyState) {
+      return [
+        strategyState.currentPlayer,
+        strategyState.gameOver ? 1 : 0,
+        strategyState.stores[0],
+        strategyState.stores[1],
+        strategyState.pits[0].join(','),
+        strategyState.pits[1].join(','),
+      ].join('|');
+    }
+
+    function maybeCommitPendingCpuTurn() {
+      const plan = pendingCpuTurnPlan;
+      if (!plan || !plan.delayElapsed || !plan.ready) return;
+      if (!hotseatMode || !isLocalCpuMode() || !bothJoined() || state.gameOver || animating || menuOpen) return;
+      if (state.currentPlayer !== plan.playerIdx) return;
+      if (buildCpuTurnKey(buildCpuStrategyState()) !== plan.key) return;
+      if (!Number.isInteger(plan.pitIdx) || plan.pitIdx < 0 || plan.pitIdx >= PITS) {
+        throw new Error(plan.controller.name + ' chose an invalid pit index: ' + plan.pitIdx);
+      }
+      if (state.pits[plan.playerIdx][plan.pitIdx] === 0) {
+        throw new Error(plan.controller.name + ' chose an empty pit: ' + plan.pitIdx);
+      }
+
+      cancelPendingCpuTurn();
+      handlePitClick(plan.playerIdx, plan.pitIdx);
+    }
+
+    function ensurePendingCpuTurnDelay(plan) {
+      if (plan.delayScheduled) return;
+      plan.delayScheduled = true;
+      pendingCpuTurnTimer = setTimeout(function() {
+        pendingCpuTurnTimer = null;
+        if (pendingCpuTurnPlan !== plan) return;
+        plan.delayElapsed = true;
+        maybeCommitPendingCpuTurn();
+      }, cpuTurnDelayMs);
+    }
+
+    function ensurePendingCpuTurnPlan(strategyState, options) {
+      const normalizedOptions = Object.assign({
+        allowMainThreadFallback: true,
+        suppressWorkerFailureError: false,
+      }, options);
+      const playerIdx = strategyState.currentPlayer;
+      const controller = localAutomatedPlayers[playerIdx];
+      if (!controller || strategyState.gameOver) {
+        cancelPendingCpuTurn();
+        return null;
+      }
+
+      const turnKey = buildCpuTurnKey(strategyState);
+      if (pendingCpuTurnPlan && pendingCpuTurnPlan.key === turnKey && pendingCpuTurnPlan.playerIdx === playerIdx) {
+        ensurePendingCpuTurnDelay(pendingCpuTurnPlan);
+        return pendingCpuTurnPlan;
+      }
+
+      cancelPendingCpuTurn();
+      const turnToken = pendingCpuTurnToken;
+      const plan = {
+        key: turnKey,
+        playerIdx: playerIdx,
+        controller: controller,
+        strategyState: buildCpuStrategyStateFromBoard(strategyState),
+        allowMainThreadFallback: normalizedOptions.allowMainThreadFallback,
+        suppressWorkerFailureError: normalizedOptions.suppressWorkerFailureError,
+        delayScheduled: false,
+        delayElapsed: false,
+        ready: false,
+        pitIdx: null,
+      };
+      pendingCpuTurnPlan = plan;
+      ensurePendingCpuTurnDelay(plan);
+
+      const chooseMovePromise = controller && controller.solverKind === 'lookahead'
+        ? chooseLookaheadMoveViaWorker(controller, plan.strategyState, playerIdx, {
+          fallbackToMainThread: plan.allowMainThreadFallback,
+        })
+        : Promise.resolve(controller.chooseMove(plan.strategyState, playerIdx));
+
+      chooseMovePromise
+        .then(function(pitIdx) {
+          if (turnToken !== pendingCpuTurnToken || pendingCpuTurnPlan !== plan) return;
+          plan.ready = true;
+          plan.pitIdx = pitIdx;
+          maybeCommitPendingCpuTurn();
+        })
+        .catch(function(err) {
+          if (turnToken !== pendingCpuTurnToken || pendingCpuTurnPlan !== plan) return;
+          if (plan.suppressWorkerFailureError) {
+            cancelPendingCpuTurn();
+            console.warn('Local CPU worker presearch failed; deferring solver start until after animation:', err);
+            return;
+          }
+          cancelPendingCpuTurn();
+          console.error('Local CPU turn failed:', err);
+          setTimeout(function() { throw err; });
+        });
+
+      return plan;
+    }
+
+    function primeCpuTurnSearchForState(boardState) {
+      if (!hotseatMode || !isLocalCpuMode() || !bothJoined()) return;
+      const strategyState = buildCpuStrategyStateFromBoard(boardState);
+      const playerIdx = strategyState.currentPlayer;
+      if (!localAutomatedPlayers[playerIdx] || strategyState.gameOver) {
+        cancelPendingCpuTurn();
+        return;
+      }
+      const controller = localAutomatedPlayers[playerIdx];
+      if (controller.solverKind === 'lookahead' && !canUseLookaheadMoveWorker()) {
+        return;
+      }
+      ensurePendingCpuTurnPlan(strategyState, {
+        allowMainThreadFallback: false,
+        suppressWorkerFailureError: true,
+      });
+    }
+
+    function scheduleCpuTurnSearchForState(boardState) {
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(function() {
+          primeCpuTurnSearchForState(boardState);
+        });
+        return;
+      }
+      setTimeout(function() {
+        primeCpuTurnSearchForState(boardState);
+      }, 0);
     }
 
     function openPlayerVsCpuSetup() {
@@ -3007,38 +3183,18 @@
     }
 
     function syncCpuTurnScheduling() {
-      cancelPendingCpuTurn();
-      if (!hotseatMode || !isLocalCpuMode() || !bothJoined() || state.gameOver || animating || menuOpen) return;
-      const playerIdx = state.currentPlayer;
-      const controller = localAutomatedPlayers[playerIdx];
-      if (!controller) return;
-      const scheduledTurnToken = pendingCpuTurnToken;
-
-      pendingCpuTurnTimer = setTimeout(function() {
-        pendingCpuTurnTimer = null;
-        if (!hotseatMode || !isLocalCpuMode() || !bothJoined() || state.gameOver || animating || menuOpen) return;
-        if (state.currentPlayer !== playerIdx) return;
-
-        const strategyState = buildCpuStrategyState();
-        Promise.resolve(controller.chooseMove(strategyState, playerIdx))
-          .then(function(pitIdx) {
-            if (scheduledTurnToken !== pendingCpuTurnToken) return;
-            if (!hotseatMode || !isLocalCpuMode() || !bothJoined() || state.gameOver || animating || menuOpen) return;
-            if (state.currentPlayer !== playerIdx) return;
-            if (!Number.isInteger(pitIdx) || pitIdx < 0 || pitIdx >= PITS) {
-              throw new Error(controller.name + ' chose an invalid pit index: ' + pitIdx);
-            }
-            if (strategyState.pits[playerIdx][pitIdx] === 0) {
-              throw new Error(controller.name + ' chose an empty pit: ' + pitIdx);
-            }
-            handlePitClick(playerIdx, pitIdx);
-          })
-          .catch(function(err) {
-            if (scheduledTurnToken !== pendingCpuTurnToken) return;
-            console.error('Local CPU turn failed:', err);
-            setTimeout(function() { throw err; });
-          });
-      }, cpuTurnDelayMs);
+      if (!hotseatMode || !isLocalCpuMode() || !bothJoined() || state.gameOver) {
+        cancelPendingCpuTurn();
+        return;
+      }
+      const strategyState = buildCpuStrategyState();
+      const playerIdx = strategyState.currentPlayer;
+      if (!localAutomatedPlayers[playerIdx]) {
+        cancelPendingCpuTurn();
+        return;
+      }
+      ensurePendingCpuTurnPlan(strategyState);
+      maybeCommitPendingCpuTurn();
     }
 
     // =====================================================================
@@ -3816,6 +3972,7 @@
       if (state.currentPlayer !== playerIdx) return;
       normalizeStateToCounts();
       if (state.pits[playerIdx][pitIdx] === 0) return;
+      const projectedLocalState = hotseatMode && isLocalCpuMode() ? executeMove(playerIdx, pitIdx) : null;
 
       if (hotseatMode) {
         if (animSpeed > 0) {
@@ -3823,6 +3980,9 @@
           animating = true;
           updateInteractionLockState(-2);
           updateMenuButton();
+          if (projectedLocalState) {
+            scheduleCpuTurnSearchForState(projectedLocalState);
+          }
           const delay = animSpeedToDelay(animSpeed);
           executeMoveAnimated(playerIdx, pitIdx, delay).then(function() {
             animating = false;
@@ -3830,6 +3990,9 @@
           });
         } else {
           // Instant move
+          if (projectedLocalState) {
+            primeCpuTurnSearchForState(projectedLocalState);
+          }
           applyInstantMoveToDom(playerIdx, pitIdx, hotseatMode ? -2 : getMyPlayerIndex());
           render();
         }
