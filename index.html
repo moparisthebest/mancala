@@ -3820,6 +3820,179 @@
           targetEl.classList.toggle('empty', state.pits[targetPlayerIdx][logicalPitIdx] === 0);
         }
 
+        function resetFloaterStyles(floater) {
+          floater.classList.remove('marble-float');
+          floater.style.position = '';
+          floater.style.zIndex = '';
+          floater.style.transitionDuration = '';
+          floater.style.transitionTimingFunction = '';
+          floater.style.left = '';
+          floater.style.top = '';
+          floater.style.transform = '';
+          floater.style.opacity = '';
+          floater.style.width = '';
+          floater.style.height = '';
+        }
+
+        function animateFloaterToTarget(floater, targetEl, pos, onDone) {
+          const targetCenter = measureLandingCenter(targetEl, pos);
+          const travelDur = Math.max(delay * 0.55, 80);
+          const dropDur = Math.max(delay * 0.35, 60);
+
+          floater.style.transitionDuration = travelDur + 'ms';
+          floater.style.transitionTimingFunction = 'ease-in-out';
+          floater.style.left = (targetCenter.x - floatWidth / 2) + 'px';
+          floater.style.top = (targetCenter.y - floatHeight / 2 - floatSize * 1.2) + 'px';
+          floater.style.transform = 'scale(1.5)';
+
+          setTimeout(function() {
+            floater.style.transitionDuration = dropDur + 'ms';
+            floater.style.transitionTimingFunction = 'ease-in';
+            floater.style.left = (targetCenter.x - floatWidth / 2) + 'px';
+            floater.style.top = (targetCenter.y - floatHeight / 2) + 'px';
+            floater.style.transform = 'scale(0.8)';
+            floater.style.opacity = '0.6';
+
+            setTimeout(function() {
+              resetFloaterStyles(floater);
+              targetEl.appendChild(floater);
+              syncTargetContent(targetEl, pos);
+              onDone();
+            }, dropDur);
+          }, travelDur);
+        }
+
+        function finishMoveState(extraTurn) {
+          state.currentPlayer = extraTurn ? playerIdx : opponentIdx;
+
+          const p0empty = state.pits[0].every(function(count) { return count === 0; });
+          const p1empty = state.pits[1].every(function(count) { return count === 0; });
+          if (p0empty || p1empty) {
+            for (let i = 0; i < PITS; i++) {
+              if (state.pits[0][i] > 0) movePitDomToStore(0, i, myIdx);
+              if (state.pits[1][i] > 0) movePitDomToStore(1, i, myIdx);
+              state.stores[0] += state.pits[0][i];
+              state.stores[1] += state.pits[1][i];
+              state.pits[0][i] = 0;
+              state.pits[1][i] = 0;
+            }
+            state.gameOver = true;
+          }
+
+          const renderIdx = hotseatMode ? -2 : getMyPlayerIndex();
+          updateInteractionLockState(renderIdx);
+          renderStatus(renderIdx);
+          renderScoreboard(renderIdx);
+          renderWinner(renderIdx);
+          renderActions(renderIdx);
+          renderBoard(renderIdx);
+
+          resolve({
+            pits: clonePitCounts(state.pits),
+            stores: cloneStoreCounts(state.stores),
+            currentPlayer: state.currentPlayer,
+            gameOver: state.gameOver,
+          });
+        }
+
+        function animateCaptureToStore(landingPitIdx, oppositeIdx, onDone) {
+          const storeEl = getStoreElementForPlayer(playerIdx, myIdx);
+          const captureSources = [
+            { sourcePlayerIdx: playerIdx, pitIdx: landingPitIdx },
+            { sourcePlayerIdx: opponentIdx, pitIdx: oppositeIdx },
+          ].map(function(entry) {
+            const pitEl = getPitElementForPlayer(entry.sourcePlayerIdx, entry.pitIdx, myIdx);
+            const marbles = pitEl ? getOwnedMarbles(pitEl) : [];
+            return {
+              sourcePlayerIdx: entry.sourcePlayerIdx,
+              pitIdx: entry.pitIdx,
+              pitEl: pitEl,
+              marbles: marbles,
+              center: pitEl ? getLocalCenter(pitEl) : srcCenter,
+              liftDirection: pitEl && pitEl.parentElement && pitEl.parentElement.id === 'top-row' ? -1 : 1,
+            };
+          }).filter(function(entry) {
+            return entry.pitEl && entry.marbles.length > 0;
+          });
+
+          if (captureSources.length === 0) {
+            onDone();
+            return;
+          }
+
+          const captureFloaters = [];
+          captureSources.forEach(function(source) {
+            source.marbles.forEach(function(marble, index) {
+              marble.remove();
+              marble.classList.add('marble-float');
+              marble.style.position = 'absolute';
+              marble.style.zIndex = '9999';
+              marble.style.transitionDuration = '0s';
+              marble.style.width = floatWidth + 'px';
+              marble.style.height = floatHeight + 'px';
+              const stackOffset = (source.marbles.length - 1 - index) * (floatSize * 0.35);
+              marble.style.left = (source.center.x - floatWidth / 2) + 'px';
+              marble.style.top = (source.center.y - floatHeight / 2 + (source.liftDirection * stackOffset)) + 'px';
+              marble.style.transform = 'scale(0.6)';
+              marble.style.opacity = '0.7';
+              animationLayer.appendChild(marble);
+              captureFloaters.push({
+                node: marble,
+                source: source,
+              });
+            });
+
+            state.pits[source.sourcePlayerIdx][source.pitIdx] = 0;
+            layoutPitMarbles(source.pitEl, [], source.sourcePlayerIdx !== getBoardPerspective(myIdx).bottomIdx);
+            source.pitEl.classList.add('empty');
+          });
+
+          const liftDur = Math.min(delay * 0.6, 250);
+          let liftedGroups = 0;
+          captureSources.forEach(function(source) {
+            let liftedCount = 0;
+            function liftNextCaptured() {
+              if (liftedCount >= source.marbles.length) {
+                liftedGroups++;
+                if (liftedGroups >= captureSources.length) {
+                  setTimeout(dropCapturedSeed, liftDur + 50);
+                }
+                return;
+              }
+              const idx = source.marbles.length - 1 - liftedCount;
+              const captureFloater = captureFloaters.find(function(entry) {
+                return entry.source === source && entry.node === source.marbles[idx];
+              });
+              const floater = captureFloater ? captureFloater.node : source.marbles[idx];
+              const stackY = source.center.y - floatHeight / 2
+                + (source.liftDirection * ((liftedCount * floatSize * 0.5) + floatSize));
+              floater.style.transitionDuration = liftDur + 'ms';
+              floater.style.left = (source.center.x - floatWidth / 2) + 'px';
+              floater.style.top = stackY + 'px';
+              floater.style.transform = 'scale(1.5)';
+              floater.style.opacity = '1';
+              liftedCount++;
+              setTimeout(liftNextCaptured, Math.max(30, liftDur / source.marbles.length));
+            }
+            liftNextCaptured();
+          });
+
+          let droppedCaptureCount = 0;
+          function dropCapturedSeed() {
+            if (droppedCaptureCount >= captureFloaters.length) {
+              onDone();
+              return;
+            }
+
+            const captureFloater = captureFloaters[droppedCaptureCount].node;
+            state.stores[playerIdx]++;
+            animateFloaterToTarget(captureFloater, storeEl, 6, function() {
+              droppedCaptureCount++;
+              setTimeout(dropCapturedSeed, Math.max(delay * 0.1, 20));
+            });
+          }
+        }
+
         function measureLandingCenter(targetEl, pos) {
           return getLocalCenter(targetEl);
         }
@@ -3917,45 +4090,9 @@
           const droppedIndex = totalSeeds - 1 - seedsLeft;
           const f = floaters[droppedIndex];
           const targetEl = getTargetEl(pos);
-          const targetCenter = measureLandingCenter(targetEl, pos);
-
-          const travelDur = Math.max(delay * 0.55, 80);
-          const dropDur = Math.max(delay * 0.35, 60);
-
-          f.style.transitionDuration = travelDur + 'ms';
-          f.style.transitionTimingFunction = 'ease-in-out';
-          f.style.left = (targetCenter.x - floatWidth / 2) + 'px';
-          f.style.top = (targetCenter.y - floatHeight / 2 - floatSize * 1.2) + 'px';
-          f.style.transform = 'scale(1.5)';
-
-          setTimeout(function() {
-            f.style.transitionDuration = dropDur + 'ms';
-            f.style.transitionTimingFunction = 'ease-in';
-            f.style.left = (targetCenter.x - floatWidth / 2) + 'px';
-            f.style.top = (targetCenter.y - floatHeight / 2) + 'px';
-            f.style.transform = 'scale(0.8)';
-            f.style.opacity = '0.6';
-
-            setTimeout(function() {
-              // Reset inline styles so the marble div goes back to CSS-controlled
-              f.classList.remove('marble-float');
-              f.style.position = '';
-              f.style.zIndex = '';
-              f.style.transitionDuration = '';
-              f.style.transitionTimingFunction = '';
-              f.style.left = '';
-              f.style.top = '';
-              f.style.transform = '';
-              f.style.opacity = '';
-              f.style.width = '';
-              f.style.height = '';
-
-              targetEl.appendChild(f);
-              syncTargetContent(targetEl, pos);
-
-              setTimeout(dropNextSeed, Math.max(delay * 0.1, 20));
-            }, dropDur);
-          }, travelDur);
+          animateFloaterToTarget(f, targetEl, pos, function() {
+            setTimeout(dropNextSeed, Math.max(delay * 0.1, 20));
+          });
         }
 
         function finishAnimation() {
@@ -3968,47 +4105,13 @@
           if (lastSide === 0 && state.pits[playerIdx][lastPitIdx] === 1) {
             const oppositeIdx = PITS - 1 - lastPitIdx;
             if (state.pits[opponentIdx][oppositeIdx] > 0) {
-              state.stores[playerIdx] += state.pits[playerIdx][lastPitIdx] + state.pits[opponentIdx][oppositeIdx];
-              state.pits[playerIdx][lastPitIdx] = 0;
-              state.pits[opponentIdx][oppositeIdx] = 0;
-              movePitDomToPlayerStore(playerIdx, lastPitIdx, playerIdx, myIdx);
-              movePitDomToPlayerStore(opponentIdx, oppositeIdx, playerIdx, myIdx);
+              animateCaptureToStore(lastPitIdx, oppositeIdx, function() {
+                finishMoveState(extraTurn);
+              });
+              return;
             }
           }
-
-          state.currentPlayer = extraTurn ? playerIdx : opponentIdx;
-
-          const p0empty = state.pits[0].every(function(count) { return count === 0; });
-          const p1empty = state.pits[1].every(function(count) { return count === 0; });
-          if (p0empty || p1empty) {
-            for (let i = 0; i < PITS; i++) {
-              if (state.pits[0][i] > 0) movePitDomToStore(0, i, myIdx);
-              if (state.pits[1][i] > 0) movePitDomToStore(1, i, myIdx);
-              state.stores[0] += state.pits[0][i];
-              state.stores[1] += state.pits[1][i];
-              state.pits[0][i] = 0;
-              state.pits[1][i] = 0;
-            }
-            state.gameOver = true;
-          }
-
-          const renderIdx = hotseatMode ? -2 : getMyPlayerIndex();
-          updateInteractionLockState(renderIdx);
-          renderStatus(renderIdx);
-          renderScoreboard(renderIdx);
-          renderWinner(renderIdx);
-          renderActions(renderIdx);
-
-          // Re-render the board to sync DOM with state, but preserve existing marble divs
-          // by reusing them instead of recreating
-          renderBoard(renderIdx);
-
-          resolve({
-            pits: clonePitCounts(state.pits),
-            stores: cloneStoreCounts(state.stores),
-            currentPlayer: state.currentPlayer,
-            gameOver: state.gameOver,
-          });
+          finishMoveState(extraTurn);
         }
 
         setTimeout(liftNext, 50);
@@ -4155,7 +4258,11 @@
           if (projectedLocalState) {
             scheduleCpuTurnSearchForState(
               projectedLocalState,
-              estimateAnimatedMoveDurationMs(movingSeeds, animSpeedToDelay(animSpeed))
+              estimateAnimatedMoveDurationMs(
+                movingSeeds,
+                animSpeedToDelay(animSpeed),
+                projectedLocalState.capture ? projectedLocalState.capture.capturedSeeds : 0
+              )
             );
           }
           const delay = animSpeedToDelay(animSpeed);
@@ -4237,15 +4344,20 @@
       return playerName(0) + ' ' + state.stores[0] + ' - ' + state.stores[1] + ' ' + playerName(1);
     }
 
-    function estimateAnimatedMoveDurationMs(seedCount, delay) {
+    function estimateAnimatedMoveDurationMs(seedCount, delay, capturedSeedCount) {
       const totalSeeds = Math.max(0, Math.floor(Number(seedCount) || 0));
       if (totalSeeds === 0 || delay <= 0) return 0;
+      const capturedSeeds = Math.max(0, Math.floor(Number(capturedSeedCount) || 0));
       const liftDur = Math.min(delay * 0.6, 250);
       const liftStepDur = Math.max(30, liftDur / totalSeeds);
       const travelDur = Math.max(delay * 0.55, 80);
       const dropDur = Math.max(delay * 0.35, 60);
       const interSeedPause = Math.max(delay * 0.1, 20);
-      return Math.ceil(50 + (totalSeeds * liftStepDur) + 50 + (totalSeeds * (travelDur + dropDur + interSeedPause)));
+      const sowDuration = 50 + (totalSeeds * liftStepDur) + 50 + (totalSeeds * (travelDur + dropDur + interSeedPause));
+      if (capturedSeeds === 0) return Math.ceil(sowDuration);
+      const captureLiftStepDur = Math.max(30, liftDur / capturedSeeds);
+      const captureDuration = 50 + (capturedSeeds * captureLiftStepDur) + 50 + (capturedSeeds * (travelDur + dropDur + interSeedPause));
+      return Math.ceil(sowDuration + captureDuration);
     }
 
     // =====================================================================

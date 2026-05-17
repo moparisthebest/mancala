@@ -3029,6 +3029,74 @@ async function runTests() {
     await pageDA.close();
 
     // =========================================================
+    console.log('\n=== Capture animation: seeds flow into store instead of snapping ===');
+
+    const pageCA = await browser.newPage();
+    pageCA.on('console', m => console.log(`    [CA] ${m.text()}`));
+    pageCA.on('pageerror', e => console.log(`    [CA ERROR] ${e.message}`));
+
+    await configurePageSettings(pageCA, { animSpeed: '500' }, { beforeNavigation: true });
+    await pageCA.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle0' });
+    await pageCA.evaluate(() => document.getElementById('hotseat-btn').click());
+    await pageCA.waitForSelector('#top-row .pit');
+
+    await pageCA.evaluate(() => {
+      let id = 0;
+      const mk = (n) => Array.from({ length: n }, () => id++);
+      state.pits = [
+        [mk(2), mk(1), mk(0), mk(1), mk(0), mk(5)],
+        [mk(3), mk(6), mk(5), mk(4), mk(2), mk(3)],
+      ];
+      state.stores = [Array.from({ length: 10 }, (_, i) => i), Array.from({ length: 6 }, (_, i) => i + 24)];
+      state.currentPlayer = 0;
+      state.gameOver = false;
+      render();
+      window.__captureAnimDone = false;
+      executeMoveAnimated(0, 3, 350).then(() => { window.__captureAnimDone = true; });
+    });
+
+    await pageCA.waitForFunction(() => (
+      state.pits[0][4] === 0
+      && state.pits[1][1] === 0
+      && document.querySelectorAll('.marble-float').length > 0
+    ), { timeout: 15000 });
+
+    const captureAnimMidway = await pageCA.evaluate(() => ({
+      redPit4: state.pits[0][4],
+      greenPit1: state.pits[1][1],
+      redStore: state.stores[0],
+      floaters: document.querySelectorAll('.marble-float').length,
+      currentPlayer: state.currentPlayer,
+      gameOver: state.gameOver,
+    }));
+    assert(captureAnimMidway.redPit4 === 0 && captureAnimMidway.greenPit1 === 0,
+      `Capture animation empties both capture pits before the store finishes filling: redPit4=${captureAnimMidway.redPit4}, greenPit1=${captureAnimMidway.greenPit1}`);
+    assert(captureAnimMidway.redStore >= 10 && captureAnimMidway.redStore < 17,
+      `Capture animation feeds captured seeds into the store over time instead of snapping all at once: redStore=${captureAnimMidway.redStore}`);
+    assert(captureAnimMidway.floaters > 0 && captureAnimMidway.currentPlayer === 0 && captureAnimMidway.gameOver === false,
+      `Capture animation keeps floaters active and does not finish the move early: ${JSON.stringify(captureAnimMidway)}`);
+
+    await pageCA.waitForFunction(() => window.__captureAnimDone === true, { timeout: 15000 });
+    const captureAnimFinal = await pageCA.evaluate(() => ({
+      redPit3: state.pits[0][3],
+      redPit4: state.pits[0][4],
+      greenPit1: state.pits[1][1],
+      redStore: state.stores[0],
+      greenStore: state.stores[1],
+      currentPlayer: state.currentPlayer,
+      floaters: document.querySelectorAll('.marble-float').length,
+    }));
+    assert(captureAnimFinal.redPit3 === 0
+      && captureAnimFinal.redPit4 === 0
+      && captureAnimFinal.greenPit1 === 0
+      && captureAnimFinal.redStore === 17
+      && captureAnimFinal.greenStore === 6
+      && captureAnimFinal.currentPlayer === 1
+      && captureAnimFinal.floaters === 0,
+      `Capture animation still resolves to the same final capture state: ${JSON.stringify(captureAnimFinal)}`);
+    await pageCA.close();
+
+    // =========================================================
     console.log('\n=== Animation lock state is visible on the board ===');
 
     const pageLK = await browser.newPage();
