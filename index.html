@@ -2194,25 +2194,118 @@
       }
     }
 
-    async function runParallelLookaheadRound(workers, rootMoves, maximizingPlayerIdx, depth, remainingMs, config) {
-      const results = new Array(rootMoves.length);
+    function getLookaheadRemainingMs(deadlineMs) {
+      return Math.max(0, Math.floor(deadlineMs - performance.now()));
+    }
+
+    function getLookaheadScoutBeta(score) {
+      return score >= LOOKAHEAD_MAX_SCORE ? LOOKAHEAD_MAX_SCORE : score + 1;
+    }
+
+    function selectBestParallelRootMove(rootMoves, roundResults, fallbackMove) {
+      let bestMove = fallbackMove;
+      let bestScore = LOOKAHEAD_MIN_SCORE;
+      for (let idx = 0; idx < rootMoves.length; idx++) {
+        const result = roundResults[idx];
+        if (!result) continue;
+        if (result.score > bestScore) {
+          bestScore = result.score;
+          bestMove = rootMoves[idx].pitIdx;
+        }
+      }
+      return { bestMove: bestMove, bestScore: bestScore };
+    }
+
+    async function runLookaheadWorkerBatch(workers, moves, maximizingPlayerIdx, depth, remainingMs, config, alpha, beta) {
+      const results = Array.from({ length: moves.length }, function() { return null; });
       let nextIndex = 0;
 
       await Promise.all(workers.map(async function(worker) {
         while (true) {
           const currentIndex = nextIndex;
           nextIndex++;
-          if (currentIndex >= rootMoves.length) return;
-          const move = rootMoves[currentIndex];
+          if (currentIndex >= moves.length) return;
+          const move = moves[currentIndex];
           results[currentIndex] = await runLookaheadWorkerTask(worker, {
             boardState: move.childState,
             maximizingPlayerIdx: maximizingPlayerIdx,
             depth: depth,
             remainingMs: remainingMs,
+            alpha: alpha,
+            beta: beta,
             config: config,
           });
         }
       }));
+
+      return results;
+    }
+
+    async function runParallelLookaheadRound(workers, rootMoves, maximizingPlayerIdx, depth, deadlineMs, config) {
+      if (rootMoves.length === 0) return [];
+
+      const results = Array.from({ length: rootMoves.length }, function() { return null; });
+      const firstRemainingMs = getLookaheadRemainingMs(deadlineMs);
+      if (firstRemainingMs <= 0) return results;
+
+      results[0] = await runLookaheadWorkerTask(workers[0], {
+        boardState: rootMoves[0].childState,
+        maximizingPlayerIdx: maximizingPlayerIdx,
+        depth: depth,
+        remainingMs: firstRemainingMs,
+        alpha: LOOKAHEAD_MIN_SCORE,
+        beta: LOOKAHEAD_MAX_SCORE,
+        config: config,
+      });
+      if (!results[0] || results[0].completedDepth !== depth || rootMoves.length === 1) {
+        return results;
+      }
+
+      let bestScore = results[0].score;
+      const scoutRemainingMs = getLookaheadRemainingMs(deadlineMs);
+      if (scoutRemainingMs <= 0) return results;
+
+      const scoutResults = await runLookaheadWorkerBatch(
+        workers,
+        rootMoves.slice(1),
+        maximizingPlayerIdx,
+        depth,
+        scoutRemainingMs,
+        config,
+        bestScore,
+        getLookaheadScoutBeta(bestScore)
+      );
+
+      for (let idx = 0; idx < scoutResults.length; idx++) {
+        const rootMoveIndex = idx + 1;
+        const scoutResult = scoutResults[idx];
+        results[rootMoveIndex] = scoutResult;
+        if (!scoutResult || scoutResult.completedDepth !== depth) continue;
+        if (scoutResult.score <= bestScore) continue;
+
+        const exactRemainingMs = getLookaheadRemainingMs(deadlineMs);
+        if (exactRemainingMs <= 0) {
+          results[rootMoveIndex] = {
+            score: scoutResult.score,
+            completedDepth: 0,
+          };
+          continue;
+        }
+
+        const exactResult = await runLookaheadWorkerTask(workers[0], {
+          boardState: rootMoves[rootMoveIndex].childState,
+          maximizingPlayerIdx: maximizingPlayerIdx,
+          depth: depth,
+          remainingMs: exactRemainingMs,
+          alpha: LOOKAHEAD_MIN_SCORE,
+          beta: LOOKAHEAD_MAX_SCORE,
+          config: config,
+        });
+        results[rootMoveIndex] = exactResult;
+        if (exactResult && exactResult.completedDepth === depth && exactResult.score > bestScore) {
+          bestScore = exactResult.score;
+        }
+      }
 
       return results;
     }
@@ -2255,24 +2348,19 @@
         }));
 
         for (let targetDepth = 1; targetDepth < 0xffffffff; targetDepth++) {
-          const remainingMs = Math.max(0, Math.floor(deadlineMs - performance.now()));
-          if (remainingMs <= 0) break;
-
-          const roundResults = await runParallelLookaheadRound(workers, rootMoves, playerIdx, targetDepth - 1, remainingMs, normalizedConfig);
+          const roundResults = await runParallelLookaheadRound(
+            workers,
+            rootMoves,
+            playerIdx,
+            targetDepth - 1,
+            deadlineMs,
+            normalizedConfig
+          );
           if (roundResults.some(function(result) { return !result || result.completedDepth !== (targetDepth - 1); })) {
             break;
           }
 
-          let roundBestMove = bestMove;
-          let roundBestScore = LOOKAHEAD_MIN_SCORE;
-          for (let idx = 0; idx < rootMoves.length; idx++) {
-            const result = roundResults[idx];
-            if (result.score > roundBestScore) {
-              roundBestScore = result.score;
-              roundBestMove = rootMoves[idx].pitIdx;
-            }
-          }
-          bestMove = roundBestMove;
+          bestMove = selectBestParallelRootMove(rootMoves, roundResults, bestMove).bestMove;
           lastCompletedDepth = targetDepth;
         }
 

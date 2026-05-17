@@ -849,6 +849,62 @@ pub extern "C" fn mancala_solver_search_score_for_time(
     pack_score_search_result(result.score, completed_depth)
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn mancala_solver_search_score_window_for_time(
+    p0_0: u8,
+    p0_1: u8,
+    p0_2: u8,
+    p0_3: u8,
+    p0_4: u8,
+    p0_5: u8,
+    p1_0: u8,
+    p1_1: u8,
+    p1_2: u8,
+    p1_3: u8,
+    p1_4: u8,
+    p1_5: u8,
+    store0: u8,
+    store1: u8,
+    current_player: u8,
+    maximizing_player: u8,
+    max_depth: u32,
+    time_budget_ms: u32,
+    alpha: i32,
+    beta: i32,
+    terminal_score_weight: i32,
+    store_score_weight: i32,
+    pit_score_weight: i32,
+    extra_turn_weight: i32,
+    capture_weight: i32,
+    mobility_weight: i32,
+) -> u64 {
+    let config = build_search_config(
+        terminal_score_weight,
+        store_score_weight,
+        pit_score_weight,
+        extra_turn_weight,
+        capture_weight,
+        mobility_weight,
+    );
+    let board = build_board([
+        p0_0, p0_1, p0_2, p0_3, p0_4, p0_5, p1_0, p1_1, p1_2, p1_3, p1_4, p1_5, store0,
+        store1, current_player,
+    ]);
+    let depth = max_depth;
+    let deadline_ms = Some(current_time_ms() + f64::from(time_budget_ms));
+    let result = search(
+        &board,
+        usize::from(maximizing_player.min(1)),
+        depth,
+        &config,
+        alpha,
+        beta,
+        deadline_ms,
+    );
+    let completed_depth = if result.completed { depth } else { 0 };
+    pack_score_search_result(result.score, completed_depth)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -289,7 +289,8 @@ async function initializeWorker(message) {
       },
     });
     const exports = instance.instance.exports;
-    if (typeof exports.mancala_solver_search_score_for_time !== 'function') {
+    if (typeof exports.mancala_solver_search_score_for_time !== 'function'
+        || typeof exports.mancala_solver_search_score_window_for_time !== 'function') {
       throw new Error('WASM CPU engine worker export is missing.');
     }
     wasmCpuEngineExports = exports;
@@ -303,8 +304,8 @@ function runJavaScriptDepthSearch(message) {
     message.maximizingPlayerIdx,
     message.depth,
     message.config,
-    LOOKAHEAD_MIN_SCORE,
-    LOOKAHEAD_MAX_SCORE,
+    Number.isInteger(message.alpha) ? message.alpha : LOOKAHEAD_MIN_SCORE,
+    Number.isInteger(message.beta) ? message.beta : LOOKAHEAD_MAX_SCORE,
     deadlineMs
   );
   return {
@@ -323,9 +324,11 @@ function runRustDepthSearch(message) {
     message.config.captureWeight,
     message.config.mobilityWeight,
   ];
-  const packedResult = wasmCpuEngineExports.mancala_solver_search_score_for_time.apply(
+  const alpha = Number.isInteger(message.alpha) ? message.alpha : LOOKAHEAD_MIN_SCORE;
+  const beta = Number.isInteger(message.beta) ? message.beta : LOOKAHEAD_MAX_SCORE;
+  const packedResult = wasmCpuEngineExports.mancala_solver_search_score_window_for_time.apply(
     null,
-    args.concat([message.maximizingPlayerIdx, message.depth, message.remainingMs]).concat(configArgs)
+    args.concat([message.maximizingPlayerIdx, message.depth, message.remainingMs, alpha, beta]).concat(configArgs)
   );
   return decodePackedScoreResult(packedResult);
 }

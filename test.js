@@ -1371,9 +1371,21 @@ async function runTests() {
             )(fallbackBoard, 0);
           }),
           javascriptTimedChoice: await AVAILABLE_PLAYERS.find(p => p.id === 'alice').chooseMove(comboBoard, 0),
+          javascriptTimedSerialChoice: await chooseJavaScriptLookaheadMoveForTime(comboBoard, 0, {
+            searchMode: 'time',
+            timeBudgetMs: 25,
+            useParallelWorkers: false,
+            maxWorkers: 4,
+          }),
           javascriptDepthChoice: chooseJavaScriptLookaheadMoveForDepth(comboBoard, 0, { searchMode: 'depth', maxDepth: 4 }),
           rustDepthChoice: await chooseRustLookaheadMoveForDepth(comboBoard, 0, { searchMode: 'depth', maxDepth: 4 }),
           rustTimedChoice: await chooseRustLookaheadMoveForTime(comboBoard, 0, { searchMode: 'time', timeBudgetMs: 25 }),
+          rustTimedSerialChoice: await chooseRustLookaheadMoveForTime(comboBoard, 0, {
+            searchMode: 'time',
+            timeBudgetMs: 25,
+            useParallelWorkers: false,
+            maxWorkers: 4,
+          }),
           rustFactoryChoice: await createRustLookaheadChooser({ searchMode: 'depth', maxDepth: 4 })(comboBoard, 0),
           workerFallbackChoices: await (async function() {
             const originalWorker = window.Worker;
@@ -1438,12 +1450,16 @@ async function runTests() {
       `chooseRandomChooser returns -1 only when every chooser returns -1: ${strategyChoices.randomChooserAllMissing}`);
     assert(strategyChoices.javascriptTimedChoice === 5,
       `Alice's JavaScript timed search prefers the extra-turn move on the combo board: ${strategyChoices.javascriptTimedChoice}`);
+    assert(strategyChoices.javascriptTimedChoice === strategyChoices.javascriptTimedSerialChoice,
+      `Alice's parallel timed search matches the serial chooser on the combo board: parallel=${strategyChoices.javascriptTimedChoice}, serial=${strategyChoices.javascriptTimedSerialChoice}`);
     assert(strategyChoices.javascriptDepthChoice === 5,
       `Alice's JavaScript depth search prefers the extra-turn move on the combo board: ${strategyChoices.javascriptDepthChoice}`);
     assert(strategyChoices.rustDepthChoice === 5,
       `Rust depth search prefers the extra-turn move on the combo board: ${strategyChoices.rustDepthChoice}`);
     assert(strategyChoices.rustTimedChoice === 5,
       `Rust timed search prefers the same extra-turn move on the combo board: ${strategyChoices.rustTimedChoice}`);
+    assert(strategyChoices.rustTimedChoice === strategyChoices.rustTimedSerialChoice,
+      `Rust parallel timed search matches the serial chooser on the combo board: parallel=${strategyChoices.rustTimedChoice}, serial=${strategyChoices.rustTimedSerialChoice}`);
     assert(strategyChoices.rustFactoryChoice === 5,
       `The configurable Rust chooser factory supports fixed-depth searches: ${strategyChoices.rustFactoryChoice}`);
     assert(strategyChoices.workerFallbackChoices.alice === 5 && strategyChoices.workerFallbackChoices.ashton === 5,
