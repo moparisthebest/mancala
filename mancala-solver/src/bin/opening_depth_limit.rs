@@ -1,6 +1,8 @@
 use std::time::Instant;
 
-use mancala_solver::{SearchConfig, choose_move_for_depth, initial_board};
+use mancala_solver::{
+    ParallelSearchOptions, SearchConfig, choose_parallel_move_for_depth, initial_board,
+};
 
 const DEFAULT_BUDGET_MS: f64 = 2_000.0;
 const DEFAULT_MAX_DEPTH: u32 = 20;
@@ -11,6 +13,7 @@ struct CliOptions {
     budget_ms: f64,
     max_depth: u32,
     samples: usize,
+    parallel: ParallelSearchOptions,
 }
 
 fn main() {
@@ -23,6 +26,10 @@ fn main() {
     println!("Budget: {:.1}ms", options.budget_ms);
     println!("Max depth to test: {}", options.max_depth);
     println!("Samples per depth: {}", options.samples);
+    println!(
+        "Parallel search: enabled={}, max_workers={}",
+        options.parallel.use_parallel_workers, options.parallel.max_workers
+    );
     println!();
 
     for depth in 1..=options.max_depth {
@@ -30,7 +37,7 @@ fn main() {
         let mut chosen_move = -1;
         for _ in 0..options.samples {
             let start = Instant::now();
-            chosen_move = choose_move_for_depth(board, depth, &config);
+            chosen_move = choose_parallel_move_for_depth(board, depth, &config, &options.parallel);
             timings.push(start.elapsed().as_secs_f64() * 1000.0);
         }
         timings.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -62,6 +69,7 @@ fn parse_args() -> CliOptions {
         budget_ms: DEFAULT_BUDGET_MS,
         max_depth: DEFAULT_MAX_DEPTH,
         samples: DEFAULT_SAMPLES,
+        parallel: ParallelSearchOptions::default(),
     };
 
     let mut args = std::env::args().skip(1);
@@ -75,6 +83,14 @@ fn parse_args() -> CliOptions {
             }
             "--samples" => {
                 options.samples = parse_usize_arg("--samples", args.next().as_deref());
+            }
+            "--use-parallel-workers" => {
+                options.parallel.use_parallel_workers =
+                    parse_bool_arg("--use-parallel-workers", args.next().as_deref());
+            }
+            "--max-workers" => {
+                options.parallel.max_workers =
+                    parse_usize_arg("--max-workers", args.next().as_deref()).max(1);
             }
             "--help" | "-h" => print_help_and_exit(0),
             other => {
@@ -126,12 +142,26 @@ fn parse_usize_arg(flag: &str, value: Option<&str>) -> usize {
         })
 }
 
+fn parse_bool_arg(flag: &str, value: Option<&str>) -> bool {
+    match value.unwrap_or_else(|| {
+        eprintln!("Missing value for {flag}");
+        print_help_and_exit(1);
+    }) {
+        "true" => true,
+        "false" => false,
+        other => {
+            eprintln!("Invalid value for {flag}: expected true or false, got {other}");
+            print_help_and_exit(1);
+        }
+    }
+}
+
 fn print_help_and_exit(code: i32) -> ! {
     let program = std::env::args()
         .next()
         .unwrap_or_else(|| "opening_depth_limit".to_string());
     println!(
-        "Usage: {program} [--budget-ms N] [--max-depth N] [--samples N]\n\
+        "Usage: {program} [--budget-ms N] [--max-depth N] [--samples N] [--use-parallel-workers true|false] [--max-workers N]\n\
          \n\
          Benchmarks the initial Mancala position and reports the deepest fixed-depth\n\
          search whose median wall-clock runtime stays within the requested budget."

@@ -11,7 +11,7 @@ CARGO_BIN="${CARGO:-cargo}"
 
 rm -f "$OUTPUT_PATH"
 
-"$CARGO_BIN" build --manifest-path "$MANIFEST_PATH" --target wasm32-unknown-unknown --target-dir "$TARGET_DIR" --release
+"$CARGO_BIN" build --manifest-path "$MANIFEST_PATH" --lib --target wasm32-unknown-unknown --target-dir "$TARGET_DIR" --release
 cp "$TARGET_PATH" "$OUTPUT_PATH"
 
 if command -v llvm-strip >/dev/null 2>&1; then

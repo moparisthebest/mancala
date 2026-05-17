@@ -23,6 +23,23 @@ impl Default for SearchConfig {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParallelSearchOptions {
+    pub use_parallel_workers: bool,
+    pub max_workers: usize,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Default for ParallelSearchOptions {
+    fn default() -> Self {
+        Self {
+            use_parallel_workers: true,
+            max_workers: 6,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Board {
     pub pits: [[u8; PITS]; 2],
@@ -229,6 +246,21 @@ fn ordered_legal_moves(board: &Board) -> Vec<usize> {
     moves.into_iter().map(|(_, pit)| pit).collect()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn effective_parallel_worker_count(options: &ParallelSearchOptions, root_move_count: usize) -> usize {
+    if !options.use_parallel_workers || root_move_count < 2 {
+        return 1;
+    }
+    let available_workers = std::thread::available_parallelism()
+        .map(|value| value.get())
+        .unwrap_or(1);
+    options
+        .max_workers
+        .max(1)
+        .min(available_workers)
+        .min(root_move_count)
+}
+
 fn sum_side_pits(board: &Board, player: usize) -> i32 {
     board.pits[player].iter().map(|&count| i32::from(count)).sum()
 }
@@ -376,6 +408,79 @@ pub fn choose_move_for_depth(board: Board, max_depth: u32, config: &SearchConfig
     .best_move
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn search_root_moves_parallel(
+    board: &Board,
+    depth: u32,
+    config: &SearchConfig,
+    deadline_ms: Option<f64>,
+    worker_count: usize,
+) -> Vec<SearchResult> {
+    let maximizing_player = board.current_player;
+    let root_moves: Vec<(usize, Board)> = ordered_legal_moves(board)
+        .into_iter()
+        .filter_map(|pit| simulate_move(board, maximizing_player, pit).map(|result| (pit, result.board)))
+        .collect();
+    let results = (0..root_moves.len())
+        .map(|_| std::sync::Mutex::new(None))
+        .collect::<Vec<_>>();
+
+    std::thread::scope(|scope| {
+        for worker_idx in 0..worker_count {
+            let root_moves = &root_moves;
+            let results = &results;
+            scope.spawn(move || {
+                let mut next_index = worker_idx;
+                while next_index < root_moves.len() {
+                    let (pit, child_board) = root_moves[next_index];
+                    let child = search(
+                        &child_board,
+                        maximizing_player,
+                        depth.saturating_sub(1),
+                        config,
+                        i32::MIN,
+                        i32::MAX,
+                        deadline_ms,
+                    );
+                    *results[next_index].lock().expect("parallel search result lock poisoned") =
+                        Some(SearchResult {
+                            score: child.score,
+                            best_move: pit as i32,
+                            completed: child.completed,
+                        });
+                    next_index += worker_count;
+                }
+            });
+        }
+    });
+
+    results
+        .into_iter()
+        .map(|entry| entry.lock().expect("parallel search result lock poisoned").unwrap())
+        .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn choose_parallel_move_for_depth(
+    board: Board,
+    max_depth: u32,
+    config: &SearchConfig,
+    parallel: &ParallelSearchOptions,
+) -> i32 {
+    let root_move_count = ordered_legal_moves(&board).len();
+    let worker_count = effective_parallel_worker_count(parallel, root_move_count);
+    if worker_count < 2 {
+        return choose_move_for_depth(board, max_depth, config);
+    }
+
+    let results = search_root_moves_parallel(&board, max_depth.max(1), config, None, worker_count);
+    results
+        .into_iter()
+        .max_by_key(|result| result.score)
+        .map(|result| result.best_move)
+        .unwrap_or(-1)
+}
+
 fn pack_timed_search_result(best_move: i32, completed_depth: u32) -> u64 {
     let move_bits = u32::from_ne_bytes(best_move.to_ne_bytes());
     (u64::from(completed_depth) << 32) | u64::from(move_bits)
@@ -413,6 +518,50 @@ pub fn choose_move_for_time(board: Board, time_budget_ms: u32, config: &SearchCo
         }
         best_move = result.best_move as u8;
         last_completed_depth = depth;
+        if depth == u32::MAX {
+            break;
+        }
+        depth += 1;
+    }
+
+    (best_move, last_completed_depth)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn choose_parallel_move_for_time(
+    board: Board,
+    time_budget_ms: u32,
+    config: &SearchConfig,
+    parallel: &ParallelSearchOptions,
+) -> (u8, u32) {
+    let legal = ordered_legal_moves(&board);
+    debug_assert!(
+        !legal.is_empty(),
+        "choose_parallel_move_for_time requires at least one legal move"
+    );
+    if time_budget_ms == 0 {
+        return (legal[0] as u8, 0);
+    }
+
+    let worker_count = effective_parallel_worker_count(parallel, legal.len());
+    if worker_count < 2 {
+        return choose_move_for_time(board, time_budget_ms, config);
+    }
+
+    let deadline = current_time_ms() + f64::from(time_budget_ms);
+    let mut best_move = legal[0] as u8;
+    let mut depth = 1u32;
+    let mut last_completed_depth = 0u32;
+
+    loop {
+        let results = search_root_moves_parallel(&board, depth, config, Some(deadline), worker_count);
+        if results.iter().any(|result| !result.completed) {
+            break;
+        }
+        if let Some(best_result) = results.into_iter().max_by_key(|result| result.score) {
+            best_move = best_result.best_move as u8;
+            last_completed_depth = depth;
+        }
         if depth == u32::MAX {
             break;
         }

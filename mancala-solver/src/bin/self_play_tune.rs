@@ -1,6 +1,9 @@
 use std::time::Instant;
 
-use mancala_solver::{Board, PITS, SearchConfig, apply_move, choose_move_for_time, initial_board};
+use mancala_solver::{
+    Board, PITS, ParallelSearchOptions, SearchConfig, apply_move, choose_parallel_move_for_time,
+    initial_board,
+};
 
 const DEFAULT_EXPLORE_BUDGET_MS: u32 = 100;
 const DEFAULT_FINAL_BUDGET_MS: u32 = 2_000;
@@ -12,6 +15,7 @@ struct CliOptions {
     explore_budget_ms: u32,
     final_budget_ms: u32,
     cycles: usize,
+    parallel: ParallelSearchOptions,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -44,6 +48,10 @@ fn main() {
     println!("Exploration budget: {}ms/move", options.explore_budget_ms);
     println!("Final validation budget: {}ms/move", options.final_budget_ms);
     println!("Optimization cycles: {}", options.cycles);
+    println!(
+        "Parallel search: enabled={}, max_workers={}",
+        options.parallel.use_parallel_workers, options.parallel.max_workers
+    );
     println!();
 
     for cycle in 0..options.cycles {
@@ -53,12 +61,14 @@ fn main() {
             best_player1,
             best_player2,
             options.explore_budget_ms,
+            options.parallel,
         );
         let optimized_player2 = optimize_for_seat(
             1,
             best_player2,
             optimized_player1,
             options.explore_budget_ms,
+            options.parallel,
         );
         let changed = optimized_player1 != best_player1 || optimized_player2 != best_player2;
         best_player1 = optimized_player1;
@@ -72,10 +82,30 @@ fn main() {
     }
 
     println!("=== Final validation at {}ms/move ===", options.final_budget_ms);
-    let asymmetric = play_game(best_player1, best_player2, options.final_budget_ms);
-    let player1_symmetric = play_game(best_player1, best_player1, options.final_budget_ms);
-    let player2_symmetric = play_game(best_player2, best_player2, options.final_budget_ms);
-    let default_symmetric = play_game(default_config, default_config, options.final_budget_ms);
+    let asymmetric = play_game(
+        best_player1,
+        best_player2,
+        options.final_budget_ms,
+        options.parallel,
+    );
+    let player1_symmetric = play_game(
+        best_player1,
+        best_player1,
+        options.final_budget_ms,
+        options.parallel,
+    );
+    let player2_symmetric = play_game(
+        best_player2,
+        best_player2,
+        options.final_budget_ms,
+        options.parallel,
+    );
+    let default_symmetric = play_game(
+        default_config,
+        default_config,
+        options.final_budget_ms,
+        options.parallel,
+    );
 
     print_match_report(
         "Best player1 vs best player2",
@@ -117,6 +147,7 @@ fn parse_args() -> CliOptions {
         explore_budget_ms: DEFAULT_EXPLORE_BUDGET_MS,
         final_budget_ms: DEFAULT_FINAL_BUDGET_MS,
         cycles: DEFAULT_CYCLES,
+        parallel: ParallelSearchOptions::default(),
     };
 
     let mut args = std::env::args().skip(1);
@@ -132,6 +163,14 @@ fn parse_args() -> CliOptions {
             }
             "--cycles" => {
                 options.cycles = parse_usize_arg("--cycles", args.next().as_deref());
+            }
+            "--use-parallel-workers" => {
+                options.parallel.use_parallel_workers =
+                    parse_bool_arg("--use-parallel-workers", args.next().as_deref());
+            }
+            "--max-workers" => {
+                options.parallel.max_workers =
+                    parse_usize_arg("--max-workers", args.next().as_deref()).max(1);
             }
             "--help" | "-h" => {
                 print_help_and_exit(0);
@@ -172,12 +211,26 @@ fn parse_usize_arg(flag: &str, value: Option<&str>) -> usize {
         })
 }
 
+fn parse_bool_arg(flag: &str, value: Option<&str>) -> bool {
+    match value.unwrap_or_else(|| {
+        eprintln!("Missing value for {flag}");
+        print_help_and_exit(1);
+    }) {
+        "true" => true,
+        "false" => false,
+        other => {
+            eprintln!("Invalid value for {flag}: expected true or false, got {other}");
+            print_help_and_exit(1);
+        }
+    }
+}
+
 fn print_help_and_exit(code: i32) -> ! {
     let program = std::env::args()
         .next()
         .unwrap_or_else(|| "self_play_tune".to_string());
     println!(
-        "Usage: {program} [--explore-budget-ms N] [--final-budget-ms N] [--cycles N]\n\
+        "Usage: {program} [--explore-budget-ms N] [--final-budget-ms N] [--cycles N] [--use-parallel-workers true|false] [--max-workers N]\n\
          \n\
          Runs a deterministic self-play tuner around the current solver defaults.\n\
          Exploration uses a short move budget to search nearby parameter sets.\n\
@@ -191,6 +244,7 @@ fn optimize_for_seat(
     current: SearchConfig,
     opponent: SearchConfig,
     budget_ms: u32,
+    parallel: ParallelSearchOptions,
 ) -> SearchConfig {
     println!(
         "Optimizing player {} against {}",
@@ -198,14 +252,14 @@ fn optimize_for_seat(
         format_config(&opponent)
     );
     let mut best_config = current;
-    let mut best_score = evaluate_candidate(target_seat, current, opponent, budget_ms);
+    let mut best_score = evaluate_candidate(target_seat, current, opponent, budget_ms, parallel);
     println!(
         "  baseline => outcome {} margin {}",
         best_score.outcome_points, best_score.margin
     );
 
     for candidate in generate_neighbor_configs(current) {
-        let score = evaluate_candidate(target_seat, candidate, opponent, budget_ms);
+        let score = evaluate_candidate(target_seat, candidate, opponent, budget_ms, parallel);
         if score > best_score {
             best_config = candidate;
             best_score = score;
@@ -226,11 +280,12 @@ fn evaluate_candidate(
     candidate: SearchConfig,
     opponent: SearchConfig,
     budget_ms: u32,
+    parallel: ParallelSearchOptions,
 ) -> CandidateScore {
     let report = if target_seat == 0 {
-        play_game(candidate, opponent, budget_ms)
+        play_game(candidate, opponent, budget_ms, parallel)
     } else {
-        play_game(opponent, candidate, budget_ms)
+        play_game(opponent, candidate, budget_ms, parallel)
     };
     let margin = report.final_board.stores[target_seat] as i32
         - report.final_board.stores[1 - target_seat] as i32;
@@ -308,7 +363,12 @@ fn push_unique(configs: &mut Vec<SearchConfig>, config: SearchConfig) {
     }
 }
 
-fn play_game(player1: SearchConfig, player2: SearchConfig, budget_ms: u32) -> GameReport {
+fn play_game(
+    player1: SearchConfig,
+    player2: SearchConfig,
+    budget_ms: u32,
+    parallel: ParallelSearchOptions,
+) -> GameReport {
     let mut board = initial_board();
     let mut plies = 0u32;
     let mut seat_timings = [
@@ -334,7 +394,8 @@ fn play_game(player1: SearchConfig, player2: SearchConfig, budget_ms: u32) -> Ga
             &player2
         };
         let start = Instant::now();
-        let (pit_idx, completed_depth) = choose_move_for_time(board, budget_ms, config);
+        let (pit_idx, completed_depth) =
+            choose_parallel_move_for_time(board, budget_ms, config, &parallel);
         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
         let timing = &mut seat_timings[current_player];
         timing.moves += 1;

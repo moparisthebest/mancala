@@ -154,6 +154,8 @@ Useful flags:
 - `--explore-budget-ms N` to change the short-budget search used while exploring nearby parameter sets
 - `--final-budget-ms N` to change the long validation budget; the default is `2000`
 - `--cycles N` to run more seat-optimization passes
+- `--use-parallel-workers true|false` to match the in-game parallel-search toggle; the default is `true`
+- `--max-workers N` to match the in-game worker cap; the default is `6`
 
 The tuner runs deterministic self-play games, reports the best parameter set it found for **player 1** and **player 2** separately, and prints timing/depth stats for the final validation games on the current machine.
 
@@ -169,6 +171,8 @@ Useful flags:
 - `--budget-ms N` to change the target per-move wall-clock budget; the default is `2000`
 - `--max-depth N` to keep probing deeper before stopping
 - `--samples N` to run multiple timings per depth and use the median
+- `--use-parallel-workers true|false` to match the in-game parallel-search toggle; the default is `true`
+- `--max-workers N` to match the in-game worker cap; the default is `6`
 
 This benchmark measures the **initial Mancala position** and reports the deepest **fixed-depth** search whose **median** runtime still fits inside the chosen budget on the current machine.
 
