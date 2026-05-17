@@ -884,6 +884,24 @@
       font: inherit;
     }
 
+    #cpu-setup-overlay input[type="range"].setup-input {
+      padding: 0;
+      accent-color: #3498db;
+    }
+
+    #cpu-setup-overlay .setup-inline-value {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #ecf0f1;
+    }
+
+    #cpu-setup-overlay .setup-difficulty {
+      margin: 0;
+      font-size: 0.92rem;
+      color: #d5dbdb;
+      line-height: 1.45;
+    }
+
     #cpu-setup-overlay .setup-checkbox-row {
       display: flex;
       align-items: center;
@@ -1577,6 +1595,9 @@
     const LOOKAHEAD_MAX_SCORE = 2147483647;
     const MAX_PARALLEL_LOOKAHEAD_WORKERS = 6;
     const DEFAULT_LOOKAHEAD_DEPTH = 42;
+    const BASIC_LOOKAHEAD_MIN_TIME_BUDGET_MS = 50;
+    const BASIC_LOOKAHEAD_MAX_TIME_BUDGET_MS = 15000;
+    const BASIC_LOOKAHEAD_TIME_STEP_MS = 50;
     const DEFAULT_LOOKAHEAD_CONFIG = Object.freeze({
       searchMode: 'time',
       maxDepth: DEFAULT_LOOKAHEAD_DEPTH,
@@ -1620,6 +1641,13 @@
       return Math.max(0, Math.min(60000, Math.floor(parsed)));
     }
 
+    function normalizeBasicLookaheadTimeBudget(timeBudgetMs) {
+      const parsed = Number(timeBudgetMs);
+      if (!Number.isFinite(parsed)) return DEFAULT_LOOKAHEAD_CONFIG.timeBudgetMs;
+      const clamped = Math.max(BASIC_LOOKAHEAD_MIN_TIME_BUDGET_MS, Math.min(BASIC_LOOKAHEAD_MAX_TIME_BUDGET_MS, parsed));
+      return Math.round(clamped / BASIC_LOOKAHEAD_TIME_STEP_MS) * BASIC_LOOKAHEAD_TIME_STEP_MS;
+    }
+
     function normalizeLookaheadSearchMode(value) {
       return value === 'depth' ? 'depth' : 'time';
     }
@@ -1652,6 +1680,24 @@
         captureWeight: normalizeLookaheadWeight(raw.captureWeight, DEFAULT_LOOKAHEAD_CONFIG.captureWeight),
         mobilityWeight: normalizeLookaheadWeight(raw.mobilityWeight, DEFAULT_LOOKAHEAD_CONFIG.mobilityWeight),
       };
+    }
+
+    function normalizeBasicLookaheadConfig(config) {
+      const raw = config || {};
+      return Object.assign({}, normalizeRustLookaheadConfig(DEFAULT_LOOKAHEAD_CONFIG), {
+        searchMode: 'time',
+        timeBudgetMs: normalizeBasicLookaheadTimeBudget(raw.timeBudgetMs),
+        extendTimeBudgetToAnimation: raw.extendTimeBudgetToAnimation == null
+          ? DEFAULT_LOOKAHEAD_CONFIG.extendTimeBudgetToAnimation
+          : !!raw.extendTimeBudgetToAnimation,
+      });
+    }
+
+    function getBasicLookaheadDifficultyLabel(timeBudgetMs) {
+      if (timeBudgetMs <= 500) return 'Easy';
+      if (timeBudgetMs <= 2500) return 'Hard';
+      if (timeBudgetMs <= 10000) return 'Very Hard';
+      return 'Impossible';
     }
 
     function encodeLookaheadConfigForSolver(config) {
@@ -2636,6 +2682,7 @@
         configuringPlayerId: null,
         configuringSlot: null,
         draftLookaheadConfig: null,
+        lookaheadUiMode: 'basic',
       };
     }
 
@@ -2740,6 +2787,7 @@
       cpuSetupState.configuringPlayerId = player.id;
       cpuSetupState.configuringSlot = slot;
       cpuSetupState.draftLookaheadConfig = loadLookaheadPlayerDefaults(player.id);
+      cpuSetupState.lookaheadUiMode = 'basic';
       cpuSetupState.expandedPlayerId = null;
       renderCpuSetup();
     }
@@ -2756,8 +2804,37 @@
       updateCpuSetupLookaheadConfig(field, !!checked);
     }
 
+    function updateCpuSetupBasicTimeBudget(value) {
+      if (!cpuSetupState.draftLookaheadConfig) return;
+      const normalizedBudget = normalizeBasicLookaheadTimeBudget(value);
+      cpuSetupState.draftLookaheadConfig = Object.assign({}, cpuSetupState.draftLookaheadConfig, {
+        timeBudgetMs: normalizedBudget,
+      });
+      updateCpuSetupBasicTimeBudgetUi(normalizedBudget);
+    }
+
+    function updateCpuSetupBasicTimeBudgetUi(timeBudgetMs) {
+      const valueEl = document.getElementById('cpu-config-basic-time-budget-value');
+      const difficultyEl = document.getElementById('cpu-config-basic-difficulty');
+      const sliderEl = document.getElementById('cpu-config-basic-time-budget');
+      if (sliderEl) sliderEl.value = String(timeBudgetMs);
+      if (valueEl) valueEl.textContent = timeBudgetMs + 'ms';
+      if (difficultyEl) difficultyEl.textContent = 'Expected difficulty: ' + getBasicLookaheadDifficultyLabel(timeBudgetMs) + '.';
+    }
+
+    function switchCpuSetupLookaheadMode(mode) {
+      if (cpuSetupState.lookaheadUiMode === mode || !cpuSetupState.draftLookaheadConfig) return;
+      if (mode === 'basic') {
+        cpuSetupState.draftLookaheadConfig = normalizeBasicLookaheadConfig(cpuSetupState.draftLookaheadConfig);
+      }
+      cpuSetupState.lookaheadUiMode = mode === 'advanced' ? 'advanced' : 'basic';
+      renderCpuSetup();
+    }
+
     function resetCpuSetupLookaheadDefaults() {
-      cpuSetupState.draftLookaheadConfig = normalizeRustLookaheadConfig(DEFAULT_LOOKAHEAD_CONFIG);
+      cpuSetupState.draftLookaheadConfig = cpuSetupState.lookaheadUiMode === 'advanced'
+        ? normalizeRustLookaheadConfig(DEFAULT_LOOKAHEAD_CONFIG)
+        : normalizeBasicLookaheadConfig(DEFAULT_LOOKAHEAD_CONFIG);
       renderCpuSetup();
     }
 
@@ -2800,7 +2877,9 @@
       if (!cpuSetupState.configuringPlayerId || !cpuSetupState.draftLookaheadConfig) return;
       const player = getAvailablePlayerById(cpuSetupState.configuringPlayerId);
       if (!player || !isConfigurableLookaheadPlayer(player)) return;
-      const normalizedConfig = normalizeRustLookaheadConfig(cpuSetupState.draftLookaheadConfig);
+      const normalizedConfig = cpuSetupState.lookaheadUiMode === 'advanced'
+        ? normalizeRustLookaheadConfig(cpuSetupState.draftLookaheadConfig)
+        : normalizeBasicLookaheadConfig(cpuSetupState.draftLookaheadConfig);
       saveLookaheadPlayerDefaults(player.id, normalizedConfig);
       applySelectedCpuSetupPlayer(createConfiguredLookaheadPlayer(player, normalizedConfig));
     }
@@ -3098,7 +3177,44 @@
       return 'Choose the automated player for the top row. Player 1 will go first.';
     }
 
-    function renderLookaheadConfigForm(player, config) {
+    function renderBasicLookaheadConfigForm(player, config) {
+      const normalizedConfig = normalizeBasicLookaheadConfig(config);
+      const implementationLabel = player.engineKind === 'rust' ? 'Rust/WASM' : 'JavaScript';
+      const instanceLabel = cpuSetupState.configuringSlot === 'bottom' ? 'bottom row player' : 'top row player';
+      const canShowAnimationBudgetOption = canUseLookaheadMoveWorker();
+      const difficultyLabel = getBasicLookaheadDifficultyLabel(normalizedConfig.timeBudgetMs);
+
+      return ''
+        + '<div class="setup-summary-card">'
+        + '<strong>' + player.name + '</strong><br>'
+        + '<span class="setup-description">' + implementationLabel + ' lookahead solver for the ' + instanceLabel + '.</span>'
+        + '</div>'
+        + '<div class="setup-config-form">'
+        + '<div class="setup-config-section">'
+        + '<h3>Search Strength</h3>'
+        + '<p class="setup-helper-text">Pick how long this solver should think on each move. More time usually means a stronger opponent.</p>'
+        + '<div class="setup-field">'
+        + '<label for="cpu-config-basic-time-budget">Time Budget (ms)</label>'
+        + '<input class="setup-input" id="cpu-config-basic-time-budget" type="range" min="' + BASIC_LOOKAHEAD_MIN_TIME_BUDGET_MS + '" max="' + BASIC_LOOKAHEAD_MAX_TIME_BUDGET_MS + '" step="' + BASIC_LOOKAHEAD_TIME_STEP_MS + '" value="' + normalizedConfig.timeBudgetMs + '" oninput="updateCpuSetupBasicTimeBudget(this.value)">'
+        + '<div class="setup-inline-value" id="cpu-config-basic-time-budget-value">' + normalizedConfig.timeBudgetMs + 'ms</div>'
+        + '<p class="setup-difficulty" id="cpu-config-basic-difficulty">Expected difficulty: ' + difficultyLabel + '.</p>'
+        + '</div>'
+        + (canShowAnimationBudgetOption
+          ? ('<div class="setup-field">'
+            + '<label class="setup-checkbox-row"><input id="cpu-config-extend-animation-budget" type="checkbox" ' + (normalizedConfig.extendTimeBudgetToAnimation ? 'checked ' : '') + 'onchange="toggleCpuSetupLookaheadBoolean(\'extendTimeBudgetToAnimation\', this.checked)"> <span>Let worker presearch use at least the current move animation time</span></label>'
+            + '<p class="setup-helper-text">When a local move animation lasts longer than the normal time budget, keep the background search running until that animation ends.</p>'
+            + '</div>')
+          : '')
+        + '</div>'
+        + '<div class="setup-actions">'
+        + '<button class="setup-secondary-btn" id="cpu-config-advanced-mode-btn" onclick="switchCpuSetupLookaheadMode(\'advanced\')">Advanced Mode</button>'
+        + '<button class="setup-secondary-btn" id="cpu-config-reset-btn" onclick="resetCpuSetupLookaheadDefaults()">Reset to Defaults</button>'
+        + '<button class="setup-primary-btn" id="cpu-config-confirm-btn" onclick="confirmCpuSetupLookaheadConfig()">Save & Continue</button>'
+        + '</div>'
+        + '</div>';
+    }
+
+    function renderAdvancedLookaheadConfigForm(player, config) {
       const normalizedConfig = normalizeRustLookaheadConfig(config);
       const implementationLabel = player.engineKind === 'rust' ? 'Rust/WASM' : 'JavaScript';
       const instanceLabel = cpuSetupState.configuringSlot === 'bottom' ? 'bottom row player' : 'top row player';
@@ -3160,10 +3276,17 @@
         + '</div>'
         + '</div>'
         + '<div class="setup-actions">'
+        + '<button class="setup-secondary-btn" id="cpu-config-basic-mode-btn" onclick="switchCpuSetupLookaheadMode(\'basic\')">Basic Mode</button>'
         + '<button class="setup-secondary-btn" id="cpu-config-reset-btn" onclick="resetCpuSetupLookaheadDefaults()">Reset to Defaults</button>'
         + '<button class="setup-primary-btn" id="cpu-config-confirm-btn" onclick="confirmCpuSetupLookaheadConfig()">Save & Continue</button>'
         + '</div>'
         + '</div>';
+    }
+
+    function renderLookaheadConfigForm(player, config) {
+      return cpuSetupState.lookaheadUiMode === 'advanced'
+        ? renderAdvancedLookaheadConfigForm(player, config)
+        : renderBasicLookaheadConfigForm(player, config);
     }
 
     function renderCpuSetup() {

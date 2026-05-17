@@ -1614,41 +1614,72 @@ async function runTests() {
       title: document.getElementById('cpu-setup-title').textContent,
       subtitle: document.getElementById('cpu-setup-subtitle').textContent,
       overflowY: getComputedStyle(document.getElementById('cpu-setup-overlay')).overflowY,
-      searchMode: document.getElementById('cpu-config-search-mode').value,
-      timeBudget: document.getElementById('cpu-config-time-budget').value,
-      useParallel: document.getElementById('cpu-config-use-parallel').checked,
-      maxWorkers: document.getElementById('cpu-config-max-workers').value,
+      basicTimeBudget: document.getElementById('cpu-config-basic-time-budget').value,
+      basicTimeBudgetMin: document.getElementById('cpu-config-basic-time-budget').min,
+      basicTimeBudgetMax: document.getElementById('cpu-config-basic-time-budget').max,
+      basicTimeBudgetStep: document.getElementById('cpu-config-basic-time-budget').step,
+      basicTimeBudgetValueText: document.getElementById('cpu-config-basic-time-budget-value').textContent,
+      basicDifficulty: document.getElementById('cpu-config-basic-difficulty').textContent,
+      advancedModeLabel: document.getElementById('cpu-config-advanced-mode-btn').textContent,
       resetLabel: document.getElementById('cpu-config-reset-btn').textContent,
       extendAnimationBudgetVisible: !!document.getElementById('cpu-config-extend-animation-budget'),
       extendAnimationBudget: document.getElementById('cpu-config-extend-animation-budget') ? document.getElementById('cpu-config-extend-animation-budget').checked : null,
+      hasAdvancedFields: !!document.getElementById('cpu-config-search-mode'),
     }));
     assert(aliceConfigScreen.title === 'Configure Alice', `Alice opens a dedicated config screen: "${aliceConfigScreen.title}"`);
     assert(aliceConfigScreen.subtitle.includes('instance only'), `Alice config subtitle explains instance-only settings: "${aliceConfigScreen.subtitle}"`);
     assert(aliceConfigScreen.overflowY === 'auto', `Alice config screen stays scrollable: ${aliceConfigScreen.overflowY}`);
-    assert(aliceConfigScreen.searchMode === 'time' && aliceConfigScreen.timeBudget === '1000',
-      `Alice config screen starts with timed-search defaults: mode=${aliceConfigScreen.searchMode}, budget=${aliceConfigScreen.timeBudget}`);
-    assert(aliceConfigScreen.useParallel === false && aliceConfigScreen.maxWorkers === '6',
-      `Alice config screen exposes parallel defaults: enabled=${aliceConfigScreen.useParallel}, maxWorkers=${aliceConfigScreen.maxWorkers}`);
+    assert(aliceConfigScreen.basicTimeBudget === '1000'
+      && aliceConfigScreen.basicTimeBudgetMin === '50'
+      && aliceConfigScreen.basicTimeBudgetMax === '15000'
+      && aliceConfigScreen.basicTimeBudgetStep === '50',
+      `Alice basic mode starts with the 50ms-15000ms slider at 1000ms: ${JSON.stringify({
+        value: aliceConfigScreen.basicTimeBudget,
+        min: aliceConfigScreen.basicTimeBudgetMin,
+        max: aliceConfigScreen.basicTimeBudgetMax,
+        step: aliceConfigScreen.basicTimeBudgetStep,
+      })}`);
+    assert(aliceConfigScreen.basicTimeBudgetValueText === '1000ms' && aliceConfigScreen.basicDifficulty === 'Expected difficulty: Hard.',
+      `Alice basic mode shows the current time budget and difficulty hint: value="${aliceConfigScreen.basicTimeBudgetValueText}", difficulty="${aliceConfigScreen.basicDifficulty}"`);
+    assert(aliceConfigScreen.advancedModeLabel === 'Advanced Mode' && !aliceConfigScreen.hasAdvancedFields,
+      `Alice config opens in basic mode with a toggle into the full form: advancedLabel="${aliceConfigScreen.advancedModeLabel}", hasAdvancedFields=${aliceConfigScreen.hasAdvancedFields}`);
     assert(aliceConfigScreen.resetLabel === 'Reset to Defaults',
       `Alice config screen includes a reset button: "${aliceConfigScreen.resetLabel}"`);
     assert(aliceConfigScreen.extendAnimationBudgetVisible && aliceConfigScreen.extendAnimationBudget === false,
       `Alice config screen exposes the animation-aware worker presearch option when workers are available: visible=${aliceConfigScreen.extendAnimationBudgetVisible}, enabled=${aliceConfigScreen.extendAnimationBudget}`);
 
     const aliceKeyboardFocusPreserved = await pagePVC.evaluate(() => {
-      const input = document.getElementById('cpu-config-time-budget');
+      const input = document.getElementById('cpu-config-basic-time-budget');
       input.focus();
       lastViewportKey = 'force-relayout';
       relayoutForViewportChange();
       return document.activeElement && document.activeElement.id;
     });
-    assert(aliceKeyboardFocusPreserved === 'cpu-config-time-budget',
+    assert(aliceKeyboardFocusPreserved === 'cpu-config-basic-time-budget',
       `Alice config keeps the focused input active across viewport relayout: "${aliceKeyboardFocusPreserved}"`);
+
+    await pagePVC.evaluate(() => {
+      document.getElementById('cpu-config-advanced-mode-btn').click();
+    });
+    await sleep(120);
+    const aliceAdvancedScreen = await pagePVC.evaluate(() => ({
+      modeLabel: document.getElementById('cpu-config-basic-mode-btn').textContent,
+      searchMode: document.getElementById('cpu-config-search-mode').value,
+      timeBudget: document.getElementById('cpu-config-time-budget').value,
+      useParallel: document.getElementById('cpu-config-use-parallel').checked,
+      maxWorkers: document.getElementById('cpu-config-max-workers').value,
+    }));
+    assert(aliceAdvancedScreen.modeLabel === 'Basic Mode'
+      && aliceAdvancedScreen.searchMode === 'time'
+      && aliceAdvancedScreen.timeBudget === '1000'
+      && aliceAdvancedScreen.useParallel === false
+      && aliceAdvancedScreen.maxWorkers === '6',
+      `Alice advanced mode still exposes the full solver form with current defaults: ${JSON.stringify(aliceAdvancedScreen)}`);
 
     await pagePVC.evaluate(() => {
       document.getElementById('cpu-config-search-mode').value = 'depth';
       document.getElementById('cpu-config-search-mode').dispatchEvent(new Event('change', { bubbles: true }));
-      document.getElementById('cpu-config-max-depth').value = '6';
-      document.getElementById('cpu-config-max-depth').dispatchEvent(new Event('change', { bubbles: true }));
+      updateCpuSetupLookaheadConfig('timeBudgetMs', '300000');
       document.getElementById('cpu-config-use-parallel').checked = true;
       document.getElementById('cpu-config-use-parallel').dispatchEvent(new Event('change', { bubbles: true }));
       document.getElementById('cpu-config-max-workers').value = '2';
@@ -1657,30 +1688,46 @@ async function runTests() {
       document.getElementById('cpu-config-extend-animation-budget').dispatchEvent(new Event('change', { bubbles: true }));
       document.getElementById('cpu-config-store').value = '900';
       document.getElementById('cpu-config-store').dispatchEvent(new Event('change', { bubbles: true }));
-      document.getElementById('cpu-config-reset-btn').click();
+      document.getElementById('cpu-config-basic-mode-btn').click();
     });
     await sleep(120);
     const aliceResetState = await pagePVC.evaluate(() => ({
-      searchMode: document.getElementById('cpu-config-search-mode').value,
-      timeBudget: document.getElementById('cpu-config-time-budget').value,
-      maxDepth: document.getElementById('cpu-config-max-depth').value,
-      useParallel: document.getElementById('cpu-config-use-parallel').checked,
-      maxWorkers: document.getElementById('cpu-config-max-workers').value,
+      basicTimeBudget: document.getElementById('cpu-config-basic-time-budget').value,
+      basicDifficulty: document.getElementById('cpu-config-basic-difficulty').textContent,
       extendAnimationBudget: document.getElementById('cpu-config-extend-animation-budget').checked,
-      storeWeight: document.getElementById('cpu-config-store').value,
+      advancedModeLabel: document.getElementById('cpu-config-advanced-mode-btn').textContent,
+      hasAdvancedFields: !!document.getElementById('cpu-config-search-mode'),
       storedDefaults: localStorage.getItem('mancala-lookahead-default-alice'),
     }));
-    assert(aliceResetState.searchMode === 'time'
-      && aliceResetState.timeBudget === '1000'
-      && aliceResetState.maxDepth === '42'
-      && aliceResetState.useParallel === false
-      && aliceResetState.maxWorkers === '6'
-      && aliceResetState.extendAnimationBudget === false
-      && aliceResetState.storeWeight === '1000',
-      `Alice reset restores the built-in CPU defaults in the form: ${JSON.stringify(aliceResetState)}`);
+    assert(aliceResetState.basicTimeBudget === '15000'
+      && aliceResetState.basicDifficulty === 'Expected difficulty: Impossible.'
+      && aliceResetState.extendAnimationBudget === true
+      && aliceResetState.advancedModeLabel === 'Advanced Mode'
+      && !aliceResetState.hasAdvancedFields,
+      `Switching from advanced back to basic resets hidden options to defaults, keeps the basic checkbox, and clamps the budget: ${JSON.stringify(aliceResetState)}`);
     assert(aliceResetState.storedDefaults === null,
       `Resetting the form alone does not save CPU defaults until continue is pressed: ${aliceResetState.storedDefaults}`);
 
+    await pagePVC.evaluate(() => {
+      document.getElementById('cpu-config-advanced-mode-btn').click();
+    });
+    await sleep(120);
+    await pagePVC.evaluate(() => {
+      updateCpuSetupLookaheadConfig('timeBudgetMs', '1');
+      document.getElementById('cpu-config-basic-mode-btn').click();
+    });
+    await sleep(120);
+    const aliceLowClampState = await pagePVC.evaluate(() => ({
+      basicTimeBudget: document.getElementById('cpu-config-basic-time-budget').value,
+      basicDifficulty: document.getElementById('cpu-config-basic-difficulty').textContent,
+    }));
+    assert(aliceLowClampState.basicTimeBudget === '50' && aliceLowClampState.basicDifficulty === 'Expected difficulty: Easy.',
+      `Switching back to basic also clamps tiny advanced budgets up to 50ms: ${JSON.stringify(aliceLowClampState)}`);
+
+    await pagePVC.evaluate(() => {
+      document.getElementById('cpu-config-advanced-mode-btn').click();
+    });
+    await sleep(120);
     await pagePVC.evaluate(() => {
       document.getElementById('cpu-config-search-mode').value = 'depth';
       document.getElementById('cpu-config-search-mode').dispatchEvent(new Event('change', { bubbles: true }));
@@ -1715,6 +1762,8 @@ async function runTests() {
     await pagePVC.evaluate(() => document.getElementById('cpu-setup-back-btn').click());
     await sleep(120);
     await pagePVC.evaluate(() => document.getElementById('cpu-select-alice').click());
+    await sleep(120);
+    await pagePVC.evaluate(() => document.getElementById('cpu-config-advanced-mode-btn').click());
     await sleep(120);
     const aliceDefaultsReloaded = await pagePVC.evaluate(() => ({
       searchMode: document.getElementById('cpu-config-search-mode').value,
@@ -1802,6 +1851,10 @@ async function runTests() {
     await pageConfigCVC.evaluate(() => document.getElementById('cpu-select-wasm-lookahead').click());
     await sleep(120);
     await pageConfigCVC.evaluate(() => {
+      document.getElementById('cpu-config-advanced-mode-btn').click();
+    });
+    await sleep(120);
+    await pageConfigCVC.evaluate(() => {
       document.getElementById('cpu-config-time-budget').value = '111';
       document.getElementById('cpu-config-time-budget').dispatchEvent(new Event('change', { bubbles: true }));
       document.getElementById('cpu-config-max-workers').value = '2';
@@ -1810,6 +1863,10 @@ async function runTests() {
     });
     await sleep(120);
     await pageConfigCVC.evaluate(() => document.getElementById('cpu-select-wasm-lookahead').click());
+    await sleep(120);
+    await pageConfigCVC.evaluate(() => {
+      document.getElementById('cpu-config-advanced-mode-btn').click();
+    });
     await sleep(120);
     await pageConfigCVC.evaluate(() => {
       document.getElementById('cpu-config-time-budget').value = '222';
