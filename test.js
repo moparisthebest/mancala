@@ -1370,11 +1370,23 @@ async function runTests() {
               function() { return -1; }
             )(fallbackBoard, 0);
           }),
-          javascriptTimedChoice: AVAILABLE_PLAYERS.find(p => p.id === 'alice').chooseMove(comboBoard, 0),
+          javascriptTimedChoice: await AVAILABLE_PLAYERS.find(p => p.id === 'alice').chooseMove(comboBoard, 0),
           javascriptDepthChoice: chooseJavaScriptLookaheadMoveForDepth(comboBoard, 0, 4),
           rustDepthChoice: await chooseRustLookaheadMoveForDepth(comboBoard, 0, 4),
           rustTimedChoice: await chooseRustLookaheadMoveForTime(comboBoard, 0, 25),
           rustFactoryChoice: await createRustLookaheadChooser({ maxDepth: 4, timeBudgetMs: 0 })(comboBoard, 0),
+          workerFallbackChoices: await (async function() {
+            const originalWorker = window.Worker;
+            try {
+              window.Worker = undefined;
+              return {
+                alice: await AVAILABLE_PLAYERS.find(p => p.id === 'alice').chooseMove(comboBoard, 0),
+                ashton: await AVAILABLE_PLAYERS.find(p => p.id === 'wasm-lookahead').chooseMove(comboBoard, 0),
+              };
+            } finally {
+              window.Worker = originalWorker;
+            }
+          })(),
           parityChecks: parityBoards.map(function(entry) {
             return {
               name: entry.name,
@@ -1434,6 +1446,8 @@ async function runTests() {
       `Rust timed search prefers the same extra-turn move on the combo board: ${strategyChoices.rustTimedChoice}`);
     assert(strategyChoices.rustFactoryChoice === 5,
       `The configurable Rust chooser factory supports fixed-depth searches: ${strategyChoices.rustFactoryChoice}`);
+    assert(strategyChoices.workerFallbackChoices.alice === 5 && strategyChoices.workerFallbackChoices.ashton === 5,
+      `Timed solvers fall back to single-threaded search when workers are unavailable: Alice=${strategyChoices.workerFallbackChoices.alice}, Ashton=${strategyChoices.workerFallbackChoices.ashton}`);
     for (const parityCheck of strategyChoices.parityChecks) {
       for (const result of parityCheck.results) {
         assert(result.javascriptMove === result.rustMove,

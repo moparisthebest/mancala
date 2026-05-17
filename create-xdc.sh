@@ -17,6 +17,7 @@ zip -9 -j "$OUTPUT" \
   index.html \
   manifest.toml \
   icon.png \
+  lookahead-worker.js \
   $SOLVER_FILES
 
 echo "Created $OUTPUT ($(du -h "$OUTPUT" | cut -f1)); $SOLVER_MESSAGE"

@@ -1,7 +1,8 @@
-const CACHE_NAME = 'mancala-pwa-v2';
+const CACHE_NAME = 'mancala-pwa-v3';
 const APP_SHELL_URLS = [
   './',
   './index.html',
+  './lookahead-worker.js',
   './icon.png',
   './icon-192.png',
   './icon-512.png',

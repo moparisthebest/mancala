@@ -313,6 +313,11 @@ fn pack_timed_search_result(best_move: i32, completed_depth: u32) -> u64 {
     (u64::from(completed_depth) << 32) | u64::from(move_bits)
 }
 
+fn pack_score_search_result(score: i32, completed_depth: u32) -> u64 {
+    let score_bits = u32::from_ne_bytes(score.to_ne_bytes());
+    (u64::from(completed_depth) << 32) | u64::from(score_bits)
+}
+
 fn choose_move_for_time(board: Board, time_budget_ms: u32) -> (u8, u32) {
     let legal = ordered_legal_moves(&board);
     debug_assert!(!legal.is_empty(), "choose_move_for_time requires at least one legal move");
@@ -397,6 +402,45 @@ pub extern "C" fn mancala_solver_choose_move_for_time(
     }
     let (best_move, completed_depth) = choose_move_for_time(board, time_budget_ms);
     pack_timed_search_result(i32::from(best_move), completed_depth)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn mancala_solver_search_score_for_time(
+    p0_0: u8,
+    p0_1: u8,
+    p0_2: u8,
+    p0_3: u8,
+    p0_4: u8,
+    p0_5: u8,
+    p1_0: u8,
+    p1_1: u8,
+    p1_2: u8,
+    p1_3: u8,
+    p1_4: u8,
+    p1_5: u8,
+    store0: u8,
+    store1: u8,
+    current_player: u8,
+    maximizing_player: u8,
+    max_depth: u32,
+    time_budget_ms: u32,
+) -> u64 {
+    let board = build_board([
+        p0_0, p0_1, p0_2, p0_3, p0_4, p0_5, p1_0, p1_1, p1_2, p1_3, p1_4, p1_5, store0,
+        store1, current_player,
+    ]);
+    let depth = max_depth;
+    let deadline_ms = Some(current_time_ms() + f64::from(time_budget_ms));
+    let result = search(
+        &board,
+        usize::from(maximizing_player.min(1)),
+        depth,
+        i32::MIN,
+        i32::MAX,
+        deadline_ms,
+    );
+    let completed_depth = if result.completed { depth } else { 0 };
+    pack_score_search_result(result.score, completed_depth)
 }
 
 #[cfg(test)]

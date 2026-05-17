@@ -1492,10 +1492,12 @@
     const LOOKAHEAD_MOBILITY_WEIGHT = 5;
     const LOOKAHEAD_MIN_SCORE = -2147483648;
     const LOOKAHEAD_MAX_SCORE = 2147483647;
+    const MAX_PARALLEL_LOOKAHEAD_WORKERS = 6;
     let wasmPlayersLoadState = 'idle';
     let wasmPlayersLoadError = '';
     let wasmCpuEnginePromise = null;
     let wasmCpuEngineExports = null;
+    let parallelLookaheadRequestId = 1;
 
     function updateWasmPlayersLoadState(state, error) {
       wasmPlayersLoadState = state;
@@ -1561,6 +1563,16 @@
       const completedDepth = Number((packedResult >> 32n) & 0xffffffffn);
       const pitIdx = moveBits >= 0x80000000 ? moveBits - 0x100000000 : moveBits;
       return { pitIdx, completedDepth };
+    }
+
+    function decodePackedScoreSearchResult(packedResult) {
+      if (typeof packedResult !== 'bigint') {
+        throw new Error('Expected a BigInt packed score result, got ' + typeof packedResult);
+      }
+      const scoreBits = Number(packedResult & 0xffffffffn);
+      const completedDepth = Number((packedResult >> 32n) & 0xffffffffn);
+      const score = scoreBits >= 0x80000000 ? scoreBits - 0x100000000 : scoreBits;
+      return { score, completedDepth };
     }
 
     function addOptionalCpuPlayer(player) {
@@ -1644,7 +1656,7 @@
       return validateRustLookaheadMove(boardState, playerIdx, pitIdx);
     }
 
-    function chooseRustLookaheadMoveForTime(boardState, playerIdx, timeBudgetMs) {
+    function chooseRustLookaheadMoveForTimeSerial(boardState, playerIdx, timeBudgetMs) {
       const budget = normalizeRustLookaheadTimeBudget(timeBudgetMs);
       const args = encodeBoardStateForSolver(boardState, playerIdx);
       const exports = getLoadedWasmCpuEngine();
@@ -1909,7 +1921,7 @@
       };
     }
 
-    function chooseJavaScriptLookaheadMoveForTime(boardState, playerIdx, timeBudgetMs) {
+    function chooseJavaScriptLookaheadMoveForTimeSerial(boardState, playerIdx, timeBudgetMs) {
       const budget = normalizeRustLookaheadTimeBudget(timeBudgetMs);
       if (boardState.currentPlayer !== playerIdx) {
         throw new Error('JavaScript lookahead chooser expected currentPlayer ' + playerIdx + ', got ' + boardState.currentPlayer);
@@ -1937,6 +1949,205 @@
 
       console.log('JavaScript time-bound solver budget ' + budget + 'ms reached depth ' + lastCompletedDepth);
       return validateRustLookaheadMove(boardState, playerIdx, bestMove);
+    }
+
+    function getLookaheadImplementationLabel(engineKind) {
+      return engineKind === 'rust' ? 'Rust' : 'JavaScript';
+    }
+
+    function canUseParallelLookaheadWorkers() {
+      return typeof Worker === 'function'
+        && typeof navigator !== 'undefined'
+        && Number.isFinite(Number(navigator.hardwareConcurrency || 0))
+        && Number(navigator.hardwareConcurrency || 0) > 1;
+    }
+
+    function getParallelLookaheadWorkerCount(legalMoveCount) {
+      const hardwareConcurrency = Math.max(1, Math.floor(Number(navigator.hardwareConcurrency || 1)) || 1);
+      return Math.min(legalMoveCount, Math.min(MAX_PARALLEL_LOOKAHEAD_WORKERS, hardwareConcurrency));
+    }
+
+    function createLookaheadWorker(engineKind) {
+      return new Promise(function(resolve, reject) {
+        let settled = false;
+        let worker = null;
+
+        function cleanup() {
+          if (!worker) return;
+          worker.removeEventListener('message', onMessage);
+          worker.removeEventListener('error', onError);
+        }
+
+        function onMessage(event) {
+          const message = event.data || {};
+          if (message.type !== 'ready' && message.type !== 'error') return;
+          cleanup();
+          if (settled) return;
+          settled = true;
+          if (message.type === 'ready') resolve(worker);
+          else {
+            try { worker.terminate(); } catch (err) {}
+            reject(new Error(message.message || 'Worker initialization failed.'));
+          }
+        }
+
+        function onError(event) {
+          cleanup();
+          if (settled) return;
+          settled = true;
+          try { if (worker) worker.terminate(); } catch (err) {}
+          reject(event.error || new Error(event.message || 'Worker initialization failed.'));
+        }
+
+        try {
+          worker = new Worker('lookahead-worker.js');
+        } catch (err) {
+          reject(err);
+          return;
+        }
+
+        worker.addEventListener('message', onMessage);
+        worker.addEventListener('error', onError);
+        worker.postMessage({
+          type: 'init',
+          engineKind: engineKind,
+          wasmUrl: 'mancala-solver.wasm',
+        });
+      });
+    }
+
+    function runLookaheadWorkerTask(worker, payload) {
+      return new Promise(function(resolve, reject) {
+        const requestId = parallelLookaheadRequestId++;
+
+        function cleanup() {
+          worker.removeEventListener('message', onMessage);
+          worker.removeEventListener('error', onError);
+        }
+
+        function onMessage(event) {
+          const message = event.data || {};
+          if (message.requestId !== requestId) return;
+          cleanup();
+          if (message.type === 'search-result') resolve(message);
+          else reject(new Error(message.message || 'Worker task failed.'));
+        }
+
+        function onError(event) {
+          cleanup();
+          reject(event.error || new Error(event.message || 'Worker task failed.'));
+        }
+
+        worker.addEventListener('message', onMessage);
+        worker.addEventListener('error', onError);
+        worker.postMessage(Object.assign({ type: 'search-depth', requestId: requestId }, payload));
+      });
+    }
+
+    function terminateLookaheadWorkers(workers) {
+      for (let i = 0; i < workers.length; i++) {
+        try {
+          workers[i].terminate();
+        } catch (err) {}
+      }
+    }
+
+    async function runParallelLookaheadRound(workers, rootMoves, maximizingPlayerIdx, depth, remainingMs) {
+      const results = new Array(rootMoves.length);
+      let nextIndex = 0;
+
+      await Promise.all(workers.map(async function(worker) {
+        while (true) {
+          const currentIndex = nextIndex;
+          nextIndex++;
+          if (currentIndex >= rootMoves.length) return;
+          const move = rootMoves[currentIndex];
+          results[currentIndex] = await runLookaheadWorkerTask(worker, {
+            boardState: move.childState,
+            maximizingPlayerIdx: maximizingPlayerIdx,
+            depth: depth,
+            remainingMs: remainingMs,
+          });
+        }
+      }));
+
+      return results;
+    }
+
+    async function chooseParallelLookaheadMoveForTime(engineKind, boardState, playerIdx, timeBudgetMs, fallbackChooser) {
+      const budget = normalizeRustLookaheadTimeBudget(timeBudgetMs);
+      if (boardState.currentPlayer !== playerIdx) {
+        throw new Error(getLookaheadImplementationLabel(engineKind) + ' lookahead chooser expected currentPlayer ' + playerIdx + ', got ' + boardState.currentPlayer);
+      }
+
+      const orderedPitIndices = getOrderedLookaheadPitIndices(boardState);
+      if (orderedPitIndices.length === 0) return -1;
+      if (budget === 0 || !canUseParallelLookaheadWorkers()) {
+        return fallbackChooser(boardState, playerIdx, budget);
+      }
+
+      const workerCount = getParallelLookaheadWorkerCount(orderedPitIndices.length);
+      if (workerCount < 2) {
+        return fallbackChooser(boardState, playerIdx, budget);
+      }
+
+      const rootMoves = orderedPitIndices.map(function(pitIdx) {
+        return {
+          pitIdx: pitIdx,
+          childState: simulateMove(boardState, playerIdx, pitIdx),
+        };
+      }).filter(function(entry) {
+        return !!entry.childState;
+      });
+
+      const deadlineMs = performance.now() + budget;
+      let bestMove = rootMoves[0].pitIdx;
+      let lastCompletedDepth = 0;
+      let workers = [];
+
+      try {
+        workers = await Promise.all(Array.from({ length: workerCount }, function() {
+          return createLookaheadWorker(engineKind);
+        }));
+
+        for (let targetDepth = 1; targetDepth < 0xffffffff; targetDepth++) {
+          const remainingMs = Math.max(0, Math.floor(deadlineMs - performance.now()));
+          if (remainingMs <= 0) break;
+
+          const roundResults = await runParallelLookaheadRound(workers, rootMoves, playerIdx, targetDepth - 1, remainingMs);
+          if (roundResults.some(function(result) { return !result || result.completedDepth !== (targetDepth - 1); })) {
+            break;
+          }
+
+          let roundBestMove = bestMove;
+          let roundBestScore = LOOKAHEAD_MIN_SCORE;
+          for (let idx = 0; idx < rootMoves.length; idx++) {
+            const result = roundResults[idx];
+            if (result.score > roundBestScore) {
+              roundBestScore = result.score;
+              roundBestMove = rootMoves[idx].pitIdx;
+            }
+          }
+          bestMove = roundBestMove;
+          lastCompletedDepth = targetDepth;
+        }
+
+        console.log(getLookaheadImplementationLabel(engineKind) + ' time-bound solver budget ' + budget + 'ms reached depth ' + lastCompletedDepth);
+        return validateRustLookaheadMove(boardState, playerIdx, bestMove);
+      } catch (err) {
+        console.warn(getLookaheadImplementationLabel(engineKind) + ' parallel lookahead failed, falling back to single-threaded search:', err);
+        return fallbackChooser(boardState, playerIdx, budget);
+      } finally {
+        terminateLookaheadWorkers(workers);
+      }
+    }
+
+    function chooseRustLookaheadMoveForTime(boardState, playerIdx, timeBudgetMs) {
+      return chooseParallelLookaheadMoveForTime('rust', boardState, playerIdx, timeBudgetMs, chooseRustLookaheadMoveForTimeSerial);
+    }
+
+    function chooseJavaScriptLookaheadMoveForTime(boardState, playerIdx, timeBudgetMs) {
+      return chooseParallelLookaheadMoveForTime('javascript', boardState, playerIdx, timeBudgetMs, chooseJavaScriptLookaheadMoveForTimeSerial);
     }
 
     function chooseJavaScriptLookaheadMoveForDepth(boardState, playerIdx, maxDepth) {
@@ -2128,6 +2339,7 @@
     let localAutomatedPlayers = [null, null];
     let cpuSetupState = createDefaultCpuSetupState();
     let pendingCpuTurnTimer = null;
+    let pendingCpuTurnToken = 0;
     let cpuTurnDelayMs = 250;
 
     function isLocalCpuMode() {
@@ -2143,6 +2355,7 @@
     }
 
     function cancelPendingCpuTurn() {
+      pendingCpuTurnToken++;
       if (pendingCpuTurnTimer != null) {
         clearTimeout(pendingCpuTurnTimer);
         pendingCpuTurnTimer = null;
@@ -2375,6 +2588,7 @@
       const playerIdx = state.currentPlayer;
       const controller = localAutomatedPlayers[playerIdx];
       if (!controller) return;
+      const scheduledTurnToken = pendingCpuTurnToken;
 
       pendingCpuTurnTimer = setTimeout(function() {
         pendingCpuTurnTimer = null;
@@ -2382,14 +2596,24 @@
         if (state.currentPlayer !== playerIdx) return;
 
         const strategyState = buildCpuStrategyState();
-        const pitIdx = controller.chooseMove(strategyState, playerIdx);
-        if (!Number.isInteger(pitIdx) || pitIdx < 0 || pitIdx >= PITS) {
-          throw new Error(controller.name + ' chose an invalid pit index: ' + pitIdx);
-        }
-        if (strategyState.pits[playerIdx][pitIdx] === 0) {
-          throw new Error(controller.name + ' chose an empty pit: ' + pitIdx);
-        }
-        handlePitClick(playerIdx, pitIdx);
+        Promise.resolve(controller.chooseMove(strategyState, playerIdx))
+          .then(function(pitIdx) {
+            if (scheduledTurnToken !== pendingCpuTurnToken) return;
+            if (!hotseatMode || !isLocalCpuMode() || !bothJoined() || state.gameOver || animating || menuOpen) return;
+            if (state.currentPlayer !== playerIdx) return;
+            if (!Number.isInteger(pitIdx) || pitIdx < 0 || pitIdx >= PITS) {
+              throw new Error(controller.name + ' chose an invalid pit index: ' + pitIdx);
+            }
+            if (strategyState.pits[playerIdx][pitIdx] === 0) {
+              throw new Error(controller.name + ' chose an empty pit: ' + pitIdx);
+            }
+            handlePitClick(playerIdx, pitIdx);
+          })
+          .catch(function(err) {
+            if (scheduledTurnToken !== pendingCpuTurnToken) return;
+            console.error('Local CPU turn failed:', err);
+            setTimeout(function() { throw err; });
+          });
       }, cpuTurnDelayMs);
     }
 

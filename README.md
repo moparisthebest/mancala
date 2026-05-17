@@ -91,6 +91,8 @@ Available local CPU players are declared near the top of `index.html` and are ea
 - **Alice** — pure JavaScript lookahead player that searches as deep as possible for up to 1000ms per turn
 - **Ashton** — optional Rust/WASM lookahead player that searches as deep as possible for up to 1000ms per turn; she is only shown when `mancala-solver.wasm` loads successfully
 
+When the environment supports Web Workers and multiple cores, Alice and Ashton split timed root searches across workers. If workers or worker-based wasm loading are unavailable or fail, they automatically fall back to the existing single-threaded search.
+
 ## UI Notes
 
 - The landing page has a clear **Mancala** title plus a top-level **How to Play** button.
